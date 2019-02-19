@@ -1,0 +1,3 @@
+{
+    "files.associations": {"*.code":"cpp","system_error":"cpp","cerrno":"cpp"}
+}

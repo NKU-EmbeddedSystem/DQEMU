@@ -1,0 +1,2 @@
+[client]	connecting succeed, client index# 0, skt: 5
+[client]	connecting succeed, client index# 1, skt: 6
