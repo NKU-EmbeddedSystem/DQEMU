@@ -7495,19 +7495,19 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
     case FUTEX_WAIT_BITSET:
 		
 		
-		// fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x\n", uaddr, g2h(uaddr));
-		// //return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
+		fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x\n", uaddr, g2h(uaddr));
+		//return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
 		
 		
 		
-        // if (timeout) {
-        //     pts = &ts;
-        //     target_to_host_timespec(pts, timeout);
-        // } else {
-        //     pts = NULL;
-        // }
-        // return get_errno(safe_futex(g2h(uaddr), op, tswap32(val),
-        //                  pts, NULL, val3));
+        if (timeout) {
+            pts = &ts;
+            target_to_host_timespec(pts, timeout);
+        } else {
+            pts = NULL;
+        }
+        return get_errno(safe_futex(g2h(uaddr), op, tswap32(val),
+                         pts, NULL, val3));
 						 
 						 
 		
@@ -8153,9 +8153,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         }
     }
 #endif
-
+#define DEBUG
 #ifdef DEBUG
-    gemu_log("syscall %d", num);
+    gemu_log("DEBUGGING syscall %d\n\n", num);
 #endif
     trace_guest_user_syscall(cpu, num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
     if(do_strace)
@@ -8194,13 +8194,23 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
             thread_cpu = NULL;
             object_unref(OBJECT(cpu));
             g_free(ts);
+            fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
             rcu_unregister_thread();
             pthread_exit(NULL);
         }
 
         cpu_list_unlock();
         preexit_cleanup(cpu_env, arg1);
-        _exit(arg1);
+        // thread ends, avoid terminating 
+        fprintf(stderr,"DDDDDDDDDDDDDDDDDOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNTTTTTTTTTTTTT\n");
+        //will result in process termination, never do that
+        //_exit(arg1);
+
+        extern void cpu_exit_signal(void);
+        cpu_exit_signal();
+        fprintf(stderr,"CAN U SEE ME?\n");
+        while (1) ;
+        return NULL;
         ret = 0; /* avoid warning */
         break;
     case TARGET_NR_read:
@@ -8218,6 +8228,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         }
         break;
     case TARGET_NR_write:
+        fprintf(stderr,"I am fvking writing!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
         if (!(p = lock_user(VERIFY_READ, arg2, arg3, 1)))
             goto efault;
         if (fd_trans_target_to_host_data(arg1)) {

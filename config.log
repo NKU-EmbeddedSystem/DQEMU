@@ -1,4 +1,4 @@
-# QEMU configure log 2019年 01月 23日 星期三 15:02:17 CST
+# QEMU configure log 2019年 02月 22日 星期五 00:41:19 CST
 # Configured with: './configure' '--disable-kvm' '--disable-werror' '--target-list=arm-linux-user'
 #
 cc -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -c -o config-temp/qemu-conf.o config-temp/qemu-conf.c
@@ -110,35 +110,137 @@ config-temp/qemu-conf.c:1:10: fatal error: brlapi.h: 没有那个文件或目录
           ^~~~~~~~~~
 compilation terminated.
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -DNCURSES_WIDECHAR -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
-config-temp/qemu-conf.c:2:10: fatal error: curses.h: 没有那个文件或目录
- #include <curses.h>
-          ^~~~~~~~~~
-compilation terminated.
+config-temp/qemu-conf.c: In function ‘main’:
+config-temp/qemu-conf.c:8:3: warning: implicit declaration of function ‘addwstr’; did you mean ‘addstr’? [-Wimplicit-function-declaration]
+   addwstr(L"wide chars\n");
+   ^~~~~~~
+   addstr
+config-temp/qemu-conf.c:8:3: warning: nested extern declaration of ‘addwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:9:3: warning: implicit declaration of function ‘addnwstr’; did you mean ‘addnstr’? [-Wimplicit-function-declaration]
+   addnwstr(&wch, 1);
+   ^~~~~~~~
+   addnstr
+config-temp/qemu-conf.c:9:3: warning: nested extern declaration of ‘addnwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:3: warning: implicit declaration of function ‘add_wch’; did you mean ‘addch’? [-Wimplicit-function-declaration]
+   add_wch(WACS_DEGREE);
+   ^~~~~~~
+   addch
+config-temp/qemu-conf.c:10:3: warning: nested extern declaration of ‘add_wch’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:11: error: ‘WACS_DEGREE’ undeclared (first use in this function); did you mean ‘ACS_DEGREE’?
+   add_wch(WACS_DEGREE);
+           ^~~~~~~~~~~
+           ACS_DEGREE
+config-temp/qemu-conf.c:10:11: note: each undeclared identifier is reported only once for each function it appears in
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -DNCURSES_WIDECHAR -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g -lncursesw
-config-temp/qemu-conf.c:2:10: fatal error: curses.h: 没有那个文件或目录
- #include <curses.h>
-          ^~~~~~~~~~
-compilation terminated.
+config-temp/qemu-conf.c: In function ‘main’:
+config-temp/qemu-conf.c:8:3: warning: implicit declaration of function ‘addwstr’; did you mean ‘addstr’? [-Wimplicit-function-declaration]
+   addwstr(L"wide chars\n");
+   ^~~~~~~
+   addstr
+config-temp/qemu-conf.c:8:3: warning: nested extern declaration of ‘addwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:9:3: warning: implicit declaration of function ‘addnwstr’; did you mean ‘addnstr’? [-Wimplicit-function-declaration]
+   addnwstr(&wch, 1);
+   ^~~~~~~~
+   addnstr
+config-temp/qemu-conf.c:9:3: warning: nested extern declaration of ‘addnwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:3: warning: implicit declaration of function ‘add_wch’; did you mean ‘addch’? [-Wimplicit-function-declaration]
+   add_wch(WACS_DEGREE);
+   ^~~~~~~
+   addch
+config-temp/qemu-conf.c:10:3: warning: nested extern declaration of ‘add_wch’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:11: error: ‘WACS_DEGREE’ undeclared (first use in this function); did you mean ‘ACS_DEGREE’?
+   add_wch(WACS_DEGREE);
+           ^~~~~~~~~~~
+           ACS_DEGREE
+config-temp/qemu-conf.c:10:11: note: each undeclared identifier is reported only once for each function it appears in
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -DNCURSES_WIDECHAR -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g -lcursesw
-config-temp/qemu-conf.c:2:10: fatal error: curses.h: 没有那个文件或目录
- #include <curses.h>
-          ^~~~~~~~~~
-compilation terminated.
+config-temp/qemu-conf.c: In function ‘main’:
+config-temp/qemu-conf.c:8:3: warning: implicit declaration of function ‘addwstr’; did you mean ‘addstr’? [-Wimplicit-function-declaration]
+   addwstr(L"wide chars\n");
+   ^~~~~~~
+   addstr
+config-temp/qemu-conf.c:8:3: warning: nested extern declaration of ‘addwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:9:3: warning: implicit declaration of function ‘addnwstr’; did you mean ‘addnstr’? [-Wimplicit-function-declaration]
+   addnwstr(&wch, 1);
+   ^~~~~~~~
+   addnstr
+config-temp/qemu-conf.c:9:3: warning: nested extern declaration of ‘addnwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:3: warning: implicit declaration of function ‘add_wch’; did you mean ‘addch’? [-Wimplicit-function-declaration]
+   add_wch(WACS_DEGREE);
+   ^~~~~~~
+   addch
+config-temp/qemu-conf.c:10:3: warning: nested extern declaration of ‘add_wch’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:11: error: ‘WACS_DEGREE’ undeclared (first use in this function); did you mean ‘ACS_DEGREE’?
+   add_wch(WACS_DEGREE);
+           ^~~~~~~~~~~
+           ACS_DEGREE
+config-temp/qemu-conf.c:10:11: note: each undeclared identifier is reported only once for each function it appears in
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -DNCURSES_WIDECHAR -I/usr/include/ncursesw -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
-config-temp/qemu-conf.c:2:10: fatal error: curses.h: 没有那个文件或目录
- #include <curses.h>
-          ^~~~~~~~~~
-compilation terminated.
+config-temp/qemu-conf.c: In function ‘main’:
+config-temp/qemu-conf.c:8:3: warning: implicit declaration of function ‘addwstr’; did you mean ‘addstr’? [-Wimplicit-function-declaration]
+   addwstr(L"wide chars\n");
+   ^~~~~~~
+   addstr
+config-temp/qemu-conf.c:8:3: warning: nested extern declaration of ‘addwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:9:3: warning: implicit declaration of function ‘addnwstr’; did you mean ‘addnstr’? [-Wimplicit-function-declaration]
+   addnwstr(&wch, 1);
+   ^~~~~~~~
+   addnstr
+config-temp/qemu-conf.c:9:3: warning: nested extern declaration of ‘addnwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:3: warning: implicit declaration of function ‘add_wch’; did you mean ‘addch’? [-Wimplicit-function-declaration]
+   add_wch(WACS_DEGREE);
+   ^~~~~~~
+   addch
+config-temp/qemu-conf.c:10:3: warning: nested extern declaration of ‘add_wch’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:11: error: ‘WACS_DEGREE’ undeclared (first use in this function); did you mean ‘ACS_DEGREE’?
+   add_wch(WACS_DEGREE);
+           ^~~~~~~~~~~
+           ACS_DEGREE
+config-temp/qemu-conf.c:10:11: note: each undeclared identifier is reported only once for each function it appears in
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -DNCURSES_WIDECHAR -I/usr/include/ncursesw -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g -lncursesw
-config-temp/qemu-conf.c:2:10: fatal error: curses.h: 没有那个文件或目录
- #include <curses.h>
-          ^~~~~~~~~~
-compilation terminated.
+config-temp/qemu-conf.c: In function ‘main’:
+config-temp/qemu-conf.c:8:3: warning: implicit declaration of function ‘addwstr’; did you mean ‘addstr’? [-Wimplicit-function-declaration]
+   addwstr(L"wide chars\n");
+   ^~~~~~~
+   addstr
+config-temp/qemu-conf.c:8:3: warning: nested extern declaration of ‘addwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:9:3: warning: implicit declaration of function ‘addnwstr’; did you mean ‘addnstr’? [-Wimplicit-function-declaration]
+   addnwstr(&wch, 1);
+   ^~~~~~~~
+   addnstr
+config-temp/qemu-conf.c:9:3: warning: nested extern declaration of ‘addnwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:3: warning: implicit declaration of function ‘add_wch’; did you mean ‘addch’? [-Wimplicit-function-declaration]
+   add_wch(WACS_DEGREE);
+   ^~~~~~~
+   addch
+config-temp/qemu-conf.c:10:3: warning: nested extern declaration of ‘add_wch’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:11: error: ‘WACS_DEGREE’ undeclared (first use in this function); did you mean ‘ACS_DEGREE’?
+   add_wch(WACS_DEGREE);
+           ^~~~~~~~~~~
+           ACS_DEGREE
+config-temp/qemu-conf.c:10:11: note: each undeclared identifier is reported only once for each function it appears in
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -DNCURSES_WIDECHAR -I/usr/include/ncursesw -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g -lcursesw
-config-temp/qemu-conf.c:2:10: fatal error: curses.h: 没有那个文件或目录
- #include <curses.h>
-          ^~~~~~~~~~
-compilation terminated.
+config-temp/qemu-conf.c: In function ‘main’:
+config-temp/qemu-conf.c:8:3: warning: implicit declaration of function ‘addwstr’; did you mean ‘addstr’? [-Wimplicit-function-declaration]
+   addwstr(L"wide chars\n");
+   ^~~~~~~
+   addstr
+config-temp/qemu-conf.c:8:3: warning: nested extern declaration of ‘addwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:9:3: warning: implicit declaration of function ‘addnwstr’; did you mean ‘addnstr’? [-Wimplicit-function-declaration]
+   addnwstr(&wch, 1);
+   ^~~~~~~~
+   addnstr
+config-temp/qemu-conf.c:9:3: warning: nested extern declaration of ‘addnwstr’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:3: warning: implicit declaration of function ‘add_wch’; did you mean ‘addch’? [-Wimplicit-function-declaration]
+   add_wch(WACS_DEGREE);
+   ^~~~~~~
+   addch
+config-temp/qemu-conf.c:10:3: warning: nested extern declaration of ‘add_wch’ [-Wnested-externs]
+config-temp/qemu-conf.c:10:11: error: ‘WACS_DEGREE’ undeclared (first use in this function); did you mean ‘ACS_DEGREE’?
+   add_wch(WACS_DEGREE);
+           ^~~~~~~~~~~
+           ACS_DEGREE
+config-temp/qemu-conf.c:10:11: note: each undeclared identifier is reported only once for each function it appears in
 cc -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
 config-temp/qemu-conf.c:1:10: fatal error: curl/curl.h: 没有那个文件或目录
  #include <curl/curl.h>
@@ -218,12 +320,12 @@ config-temp/qemu-conf.c:1:10: fatal error: sys/endian.h: 没有那个文件或�
           ^~~~~~~~~~~~~~
 compilation terminated.
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
-/tmp/cc7wDnXH.o：在函数‘main’中：
+/tmp/cctwU3TH.o：在函数‘main’中：
 /home/ub/DQEMU/config-temp/qemu-conf.c:2：对‘sin’未定义的引用
 collect2: error: ld returned 1 exit status
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g -lm
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
-/tmp/cco35NLH.o：在函数‘main’中：
+/tmp/ccFQtD4U.o：在函数‘main’中：
 /home/ub/DQEMU/config-temp/qemu-conf.c:4：对‘timer_create’未定义的引用
 collect2: error: ld returned 1 exit status
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g -lrt
@@ -248,7 +350,7 @@ cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include -c -o config-temp/qemu-conf.o config-temp/qemu-conf.c
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
-/tmp/ccOhNDhJ.o：在函数‘main’中：
+/tmp/cc2ykwwO.o：在函数‘main’中：
 /home/ub/DQEMU/config-temp/qemu-conf.c:4：对‘__atomic_load_16’未定义的引用
 /home/ub/DQEMU/config-temp/qemu-conf.c:5：对‘__atomic_store_16’未定义的引用
 /home/ub/DQEMU/config-temp/qemu-conf.c:6：对‘__atomic_compare_exchange_16’未定义的引用
@@ -280,3 +382,4 @@ cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -Wl,-z,relro -Wl,-z,now -pie -m64 -g
 cc -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include -c -o config-temp/qemu-conf.o config-temp/qemu-conf.c
 c++ -D__STDC_LIMIT_MACROS -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wall -Wundef -Wwrite-strings -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include -o config-temp/qemu-conf.exe config-temp/qemu-conf.cxx config-temp/qemu-conf.o -Wl,--warn-common -Wl,-z,relro -Wl,-z,now -pie -m64 -g
+arm-linux-gnueabihf-gcc -o config-temp/qemu-conf.exe config-temp/qemu-conf.c -static

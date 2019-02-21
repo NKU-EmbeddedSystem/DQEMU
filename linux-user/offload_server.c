@@ -32,10 +32,7 @@ static pthread_mutex_t socket_mutex;
 #define fprintf offload_log
 extern CPUArchState *env;
 uint32_t stack_end, stack_start;
-static uint32_t cmpxchg_page_addr;
-
 extern pthread_mutex_t cmpxchg_mutex;
-
 int futex_result;
 
 static void offload_server_init(void);
@@ -69,7 +66,7 @@ int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong 
 // used along with pthread_cond, indicate whether the page required by the execution thread is received.
 static int page_recv_flag; static pthread_mutex_t page_recv_mutex; static pthread_cond_t page_recv_cond;
 static int mutex_ready_flag; static pthread_mutex_t mutex_recv_mutex; static pthread_cond_t mutex_recv_cond;
-
+static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread_cond_t exit_recv_cond;
 /* get packet_counter of net_buffer */
 static uint32_t get_number(void)
 {
@@ -118,6 +115,8 @@ static void offload_server_init(void)
 	pthread_cond_init(&page_recv_cond, NULL);
 	pthread_mutex_init(&mutex_recv_mutex, NULL);
 	pthread_cond_init(&mutex_recv_cond, NULL);
+	pthread_mutex_init(&exit_recv_cond,NULL);
+	pthread_cond_init(&exit_recv_mutex,NULL);
 }
 
 static void load_cpu(void)
@@ -290,9 +289,39 @@ static void* exec_func(void *arg)
 
 	//pthread_mutex_unlock(&socket_mutex);
 	cpu_loop(env);
-
+	// here this thread reaches an end
+	
+		
 	return NULL;
 	 
+}
+
+// this happens when exec reaches exit
+void cpu_exit_signal(void)
+{
+	fprintf(stderr,"[cpu_exit_signal]\tSSSSSSSSSSSSSSSSSIGNAL...\n");
+	pthread_mutex_lock(&exit_recv_mutex);
+	cpu_exit_flag=1;
+	pthread_cond_signal(&exit_recv_cond);
+	pthread_mutex_unlock(&exit_recv_mutex);
+	fprintf(stderr,"[cpu_exit_signal]\texiting...\n");
+}
+
+// to kill exec
+void * cpu_killer(void* param)
+{
+	pthread_t exec_thread = *(pthread_t*) param;
+	fprintf(stderr, "[cpu_killer]\tKiller ready\n");
+	cpu_exit_flag = 0;
+	pthread_mutex_lock(&exit_recv_mutex);
+	while (cpu_exit_flag==0)
+	{
+		pthread_cond_wait(&exit_recv_cond,&exit_recv_mutex);	
+	}	
+	pthread_mutex_unlock(&exit_recv_mutex);	
+	fprintf(stderr, "[cpu_killer]\tTerminiting exec_cpu...:\n");
+	pthread_kill(exec_thread,NULL);
+	return NULL;
 }
 
 /* create execution thread */
@@ -304,7 +333,9 @@ static void offload_process_start(void)
 	fprintf(stderr, "[offload_process_start]\tcreate exec thread\n");
 	pthread_create(&exec_thread, NULL, exec_func, NULL);
 	fprintf(stderr, "[offload_process_start]\texec thread created\n");
-	
+	pthread_t killer_thread;
+	pthread_create(&exec_thread, NULL, cpu_killer, (void*)&exec_thread);
+
 	//pthread_join(exec_thread, NULL);
 	
 }
@@ -396,6 +427,7 @@ static void offload_process_page_request(void)
 	
 	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d\n", page_addr, perm);
 	offload_send_page_content(page_addr, perm);
+	fprintf(stderr, "[offload_process_page_request]\tsent content\n", page_addr, perm);
 	/*	if required permission is WRITE|READ,
 	*	we won't be able to use it (invalidate)
 	*	otherwise it is a shared page (shared)
@@ -448,41 +480,39 @@ static void offload_process_page_content(void)
 	pthread_mutex_unlock(&page_recv_mutex);
 	//pthread_mutex_unlock(&socket_mutex);
 	/* ? */
-	if (cmpxchg_page_addr != page_addr)
-	{
-		offload_send_page_ack(page_addr, perm);
-	}
-	
-
+	offload_send_page_ack(page_addr, perm);
 }
 
 /* send |CONTENT|page|perm|content| */
 static void offload_send_page_content(target_ulong page_addr, uint32_t perm)
 {
-	//pthread_mutex_lock(&socket_mutex);
 	/* prepare space for head */
-	p = BUFFER_PAYLOAD_P;
+	char buf[TARGET_PAGE_SIZE * 2];
+	char *p = buf + sizeof(struct tcp_msg_header);
 	/* fill addr and perm */
 	*((target_ulong *) p) = page_addr;
     p += sizeof(target_ulong);
 	*((uint32_t *) p) = perm;
 	p += sizeof(uint32_t);
-	//fprintf(stderr, "content: %d %d\n", *((uint64_t *) g2h(page_addr)), *((uint64_t *) g2h(page_addr) + 555));
     /* followed by page content (size = TARGET_PAGE_SIZE) */
+	fprintf(stderr, "[DEBUG]\tPOINT1\n");
+	//TODO: 如果是2就直接disable了 如果是1就發送。
+	//mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
+	fprintf(stderr, "[DEBUG]\tPOINT1.5\n");
 	memcpy(p, g2h(page_addr), TARGET_PAGE_SIZE);
+	fprintf(stderr, "[DEBUG]\tPOINT2\n");
     p += TARGET_PAGE_SIZE;
 	/* fill head */
-	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) net_buffer;
-	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_CONTENT);
-	
-	int res = send(client_socket, net_buffer, p - net_buffer, 0);
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
+	fill_tcp_header(tcp_header, p - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_CONTENT);
+	fprintf(stderr, "[DEBUG]\tPOINT3\n");
+	int res = send(client_socket, buf, p - buf, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_send_page_content]\tsent page %x content failed\n", page_addr);
 		exit(0);
 	}
 	fprintf(stderr, "[offload_send_page_content]\tsent page %x content, perm%d, packet#%d\n", page_addr, perm, get_number());
-	//pthread_mutex_unlock(&socket_mutex);
 }
 
 
@@ -725,25 +755,7 @@ void offload_server_start(void)
 
 void offload_server_send_cmpxchg_start(uint32_t page_addr)
 {
-	page_recv_flag = 0;
-	cmpxchg_page_addr = page_addr;
-	
 	offload_server_send_mutex_request(page_addr);
-
-	//page_addr = (page_addr / 0x1000) * 0x1000;
-	page_addr &= ~0xfff;
-	offload_server_send_page_request(page_addr, 2);
-	
-	//fprintf(stderr, "[offload_segfault_handler]\tsent page request %x, wait\n", page_addr);
-	pthread_mutex_lock(&page_recv_mutex);
-	while (page_recv_flag == 0)
-	{
-		pthread_cond_wait(&page_recv_cond, &page_recv_mutex);
-	}
-	
-	pthread_mutex_unlock(&page_recv_mutex);
-	
-	
 }
 
 /* send |MUTEX_DONE|mutex_addr|idx| */
@@ -774,10 +786,8 @@ static void offload_send_mutex_done(uint32_t mutex_addr)
 
 void offload_server_send_cmpxchg_end(uint32_t page_addr)
 {
-	cmpxchg_page_addr = 0;
 	offload_send_mutex_done(page_addr);
 	page_addr &= ~0xfff;
-	//offload_send_page_ack(page_addr, 2);
 }
 
 //try to receive exactly length bytes
@@ -794,6 +804,10 @@ static void try_recv(int length)
 	else if (res < 0)
 	{
 		fprintf(stderr, "[try_recv]\trecv failed: errno: %d\n", errno);
+	}
+	else if (res == 0)
+	{
+		fprintf(stderr, "[try_recv]\tconnection closed. I've done my job. Exiting peacefully...\n");
 	}
 	else if (res != length)
 	{

@@ -1,7 +1,5 @@
 #include "set.h"
 
-
-
 int insert(set_t *s, int t)
 {
 	for (int i = 0; i < s->size; i++)
@@ -11,12 +9,9 @@ int insert(set_t *s, int t)
 			return i;
 		}
 	}
-	
 	s->element[s->size++] = t;
 	return s->size;
 }
-
-
 
 void clear(set_t *s)
 {

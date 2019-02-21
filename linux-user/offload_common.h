@@ -76,7 +76,6 @@ extern void offload_log(FILE*, const char*, ...);
 extern __thread int offload_mode;
 
 static uint32_t get_tag(void);
-
 /* same as PROT_xxx */
 #define PAGE_NONE   0x0000
 #define PAGE_READ   0x0001
@@ -102,6 +101,6 @@ static uint32_t get_tag(void);
 #define L2_MAP_TABLE_BITS 10
 #define L2_MAP_TABLE_SIZE (1 << L2_MAP_TABLE_BITS)
 
-#define L1_MAP_TABLE_SHIFT (VIRT_ADDR_SPACE_BITS - PAGE_BITS - L1_MAP_TABLE_BITS)
+#define L1_MAP_TABLE_SHIFT (VIRT_ADDR_SPACE_BITS - 12 - L1_MAP_TABLE_BITS)
 
 #endif
