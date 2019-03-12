@@ -7344,9 +7344,12 @@ static inline abi_long host_to_target_stat64(void *cpu_env,
                                              struct stat *host_st)
 {
 #if defined(TARGET_ARM) && defined(TARGET_ABI32)
+    fprintf(stderr, "[DEBUG]\tpoint3-0\n");
+    fprintf(stderr, "[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+
     if (((CPUARMState *)cpu_env)->eabi) {
         struct target_eabi_stat64 *target_st;
-
+        fprintf(stderr, "[DEBUG]\tpoint3-a\n");
         if (!lock_user_struct(VERIFY_WRITE, target_st, target_addr, 0))
             return -TARGET_EFAULT;
         memset(target_st, 0, sizeof(struct target_eabi_stat64));
@@ -7370,6 +7373,7 @@ static inline abi_long host_to_target_stat64(void *cpu_env,
     } else
 #endif
     {
+        fprintf(stderr, "[DEBUG]\tpoint3-b\n");
 #if defined(TARGET_HAS_STRUCT_STAT64)
         struct target_stat64 *target_st;
 #else
@@ -11246,6 +11250,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 #endif
 #ifdef TARGET_NR_stat64
     case TARGET_NR_stat64:
+        
         if (!(p = lock_user_string(arg1)))
             goto efault;
         ret = get_errno(stat(path(p), &st));
@@ -11266,9 +11271,16 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 #endif
 #ifdef TARGET_NR_fstat64
     case TARGET_NR_fstat64:
+        fprintf(stderr, "[DEBUG]\tpoint0\n");
         ret = get_errno(fstat(arg1, &st));
+        fprintf(stderr, "[DEBUG]\tpoint1\n");
         if (!is_error(ret))
+        {
+
+            fprintf(stderr, "[DEBUG]\tpoint2\n");
+            fprintf(stderr, "[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
             ret = host_to_target_stat64(cpu_env, arg2, &st);
+        }
         break;
 #endif
 #if (defined(TARGET_NR_fstatat64) || defined(TARGET_NR_newfstatat))

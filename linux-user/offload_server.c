@@ -62,11 +62,19 @@ static void offload_server_process_futex_wake_result(void);
 void offload_server_send_cmpxchg_start(uint32_t);
 void offload_server_send_cmpxchg_end(uint32_t);
 extern void offload_server_qemu_init(void);
+abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
+                    abi_long arg2, abi_long arg3, abi_long arg4,
+                    abi_long arg5, abi_long arg6, abi_long arg7,
+                    abi_long arg8);
 int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
+static void offload_server_process_syscall_result(void);
+
 // used along with pthread_cond, indicate whether the page required by the execution thread is received.
 static int page_recv_flag; static pthread_mutex_t page_recv_mutex; static pthread_cond_t page_recv_cond;
 static int mutex_ready_flag; static pthread_mutex_t mutex_recv_mutex; static pthread_cond_t mutex_recv_cond;
 static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread_cond_t exit_recv_cond;
+static int syscall_ready_flag; static pthread_mutex_t syscall_recv_mutex; static pthread_cond_t syscall_recv_cond;
+abi_long result_global;
 /* get packet_counter of net_buffer */
 static uint32_t get_number(void)
 {
@@ -117,6 +125,8 @@ static void offload_server_init(void)
 	pthread_cond_init(&mutex_recv_cond, NULL);
 	pthread_mutex_init(&exit_recv_cond,NULL);
 	pthread_cond_init(&exit_recv_mutex,NULL);
+	pthread_mutex_init(&syscall_recv_mutex,NULL);
+	pthread_mutex_init(&syscall_recv_cond,NULL);
 }
 
 static void load_cpu(void)
@@ -710,11 +720,19 @@ static void offload_server_daemonize(void)
 				try_recv(size);
 				//offload_process_mutex_request();
 				break;
+
 			case TAG_OFFLOAD_CMPXCHG_VERYFIED:
 				fprintf(stderr, "[offload_server_daemonize]\ttag: cmpxchg verified, size = %d(should be 0)\n", size);
 				//try_recv(size);
 				offload_server_process_mutex_verified();
 				break;
+
+			case TAG_OFFLOAD_SYSCALL_RES:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: syscall result, size = %d\n", size);
+				try_recv(size);
+				offload_server_process_syscall_result();
+				break;
+
 			default:
 				fprintf(stderr, "[offload_server_daemonize]\tunkown tag: %d\n", tag);
 				try_recv(size);
@@ -948,4 +966,82 @@ static void offload_server_process_futex_wake_result(void)
 	page_recv_flag = 1;
 	pthread_cond_signal(&page_recv_cond);
 	pthread_mutex_unlock(&page_recv_mutex);
+}
+
+abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
+                    abi_long arg2, abi_long arg3, abi_long arg4,
+                    abi_long arg5, abi_long arg6, abi_long arg7,
+                    abi_long arg8)
+{
+	fprintf(stderr, "[pass_syscall]\tpassing syscall to center\n");
+	extern void print_syscall(int num,
+              abi_long arg1, abi_long arg2, abi_long arg3,
+              abi_long arg4, abi_long arg5, abi_long arg6);
+	print_syscall(num,
+              arg1, arg2, arg3,
+              arg4, arg5, arg6);
+	
+	char buf[TARGET_PAGE_SIZE*2];
+	char *pp = buf + sizeof(struct tcp_msg_header);
+	CPUARMState env = *((CPUARMState*)cpu_env);
+	*((CPUARMState*)pp) = (CPUARMState)env;
+	pp += sizeof(CPUARMState);
+	fprintf(stderr, "[pass_syscall]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+	*((int *)pp) = (int) num;
+	pp += sizeof(int);
+	*((uint32_t*)pp) = (uint32_t)(arg1);
+	pp += sizeof(uint32_t);
+	*((uint32_t*)pp) = (uint32_t)(arg2);
+	pp += sizeof(uint32_t);
+	*((uint32_t*)pp) = (uint32_t)(arg3);
+	pp += sizeof(uint32_t);
+	*((abi_long*)pp) = (abi_long)arg4;
+	pp += sizeof(abi_long);
+	*((abi_long*)pp) = (abi_long)arg5;
+	pp += sizeof(abi_long);
+	*((abi_long*)pp) = (abi_long)arg6;
+	pp += sizeof(abi_long);
+	*((abi_long*)pp) = (abi_long)arg7;
+	pp += sizeof(abi_long);
+	*((abi_long*)pp) = (abi_long)arg8;
+	pp += sizeof(abi_long);
+	*((int*)pp) = (int)offload_server_idx;
+	pp += sizeof(int);
+	fprintf(stderr, "[pass_syscall]\targ1: %p, arg2:%p, arg3:%p\n", arg1, arg2, arg3);
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
+	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_REQ);
+
+	int res = send(client_socket, buf, pp - buf, 0);
+	if (res < 0)
+	{
+		fprintf(stderr, "[pass_syscall]\tpassing syscall failed\n");
+		exit(0);
+	}
+	fprintf(stderr, "[pass_syscall]\tpassed syscall, packet %d, waiting...\n", get_number());
+	syscall_ready_flag = 0;
+	pthread_mutex_lock(&syscall_recv_mutex);
+	while (syscall_ready_flag == 0)
+	{
+		pthread_cond_wait(&syscall_recv_cond, &syscall_recv_mutex);
+	}
+	pthread_mutex_unlock(&syscall_recv_mutex);
+	fprintf(stderr, "[pass_syscall]\tI'm awake!\n");
+	abi_long result = result_global;
+	fprintf(stderr, "[pass_syscall]\returning result %p!\n", result);
+	return result;
+
+}
+
+static void offload_server_process_syscall_result(void)
+{
+	p = net_buffer;
+	abi_long result = *((abi_long *) p);
+    p += sizeof(abi_long);
+	result_global = result;
+	fprintf(stderr, "[offload_server_process_syscall_result]\tgot syscall ret = %p, waking up thread\n", result);
+	pthread_mutex_lock(&syscall_recv_mutex);
+	syscall_ready_flag = 1;
+	pthread_cond_signal(&syscall_recv_cond);
+	pthread_mutex_unlock(&syscall_recv_mutex);
+	//if (mutex_ready_flag == 0) offload_server_process_mutex_verified();
 }

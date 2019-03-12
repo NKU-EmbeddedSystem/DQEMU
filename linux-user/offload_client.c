@@ -101,6 +101,8 @@
 #include "qemu.h"
 static void offload_send_mutex_verified(int);
 static void offload_process_mutex_done(void);
+static void offload_send_syscall_result(int,abi_long);
+static void offload_process_syscall_request(void);
 //int requestor_idx, target_ulong addr, int perm
 struct info
 {
@@ -1142,6 +1144,12 @@ static void offload_client_daemonize(void)
 					try_recv(tcp_header->size);
 					offload_process_mutex_done();
 					break;
+				
+				case TAG_OFFLOAD_SYSCALL_REQ:
+					fprintf(stderr, "[offload_client_daemonize]\ttag: syscall request\n");
+					try_recv(tcp_header->size);
+					offload_process_syscall_request();
+					break;
 
 				default:
 					fprintf(stderr, "[offload_client_daemonize]\tunknown tag\n");
@@ -1758,4 +1766,121 @@ static void offload_client_futex_epilogue(target_ulong page_addr)
 	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
 	PageMapDesc *pmd = &page_map_table[index1][index2];
 	pthread_mutex_unlock(&pmd->owner_set_mutex);
+}
+
+struct syscall_param
+{
+	void* cpu_env;
+	int num;
+	abi_long arg1;
+	abi_long arg2;
+	abi_long arg3;
+	abi_long arg4;
+	abi_long arg5;
+	abi_long arg6;
+	abi_long arg7;
+	abi_long arg8;
+	int idx;
+};
+
+void* process_syscall_thread(void* syscall_pp)
+{
+	struct syscall_param* syscall_p = (struct syscall_param*)syscall_pp;
+	CPUARMState* cpu_env = (CPUARMState*)syscall_p->cpu_env;
+	int num = syscall_p->num;
+	abi_long arg1 = syscall_p->arg1;
+	abi_long arg2 = syscall_p->arg2;
+	abi_long arg3 = syscall_p->arg3;
+	abi_long arg4 = syscall_p->arg4;
+	abi_long arg5 = syscall_p->arg5;
+	abi_long arg6 = syscall_p->arg6;
+	abi_long arg7 = syscall_p->arg7;
+	abi_long arg8 = syscall_p->arg8;
+	int idx = syscall_p->idx;
+	fprintf(stderr, "[process_syscall_thread]\tprocessing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+	extern void print_syscall(int num,
+              abi_long arg1, abi_long arg2, abi_long arg3,
+              abi_long arg4, abi_long arg5, abi_long arg6);
+	print_syscall(num,
+              arg1, arg2, arg3,
+              arg4, arg5, arg6);
+	fprintf(stderr, "[process_syscall_thread]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+	extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
+                    abi_long arg2, abi_long arg3, abi_long arg4,
+                    abi_long arg5, abi_long arg6, abi_long arg7,
+                    abi_long arg8);
+	abi_long ret = do_syscall(cpu_env,
+				num,
+				arg1,
+				arg2,
+				arg3,
+				arg4,
+				arg5,
+				arg6,
+				0, 0);
+	offload_send_syscall_result(idx, ret);
+	free(cpu_env);
+}
+
+static void offload_process_syscall_request(void)
+{
+	
+	p = net_buffer;
+
+	CPUARMState* env = (CPUARMState*)malloc(sizeof(CPUARMState));
+	*env = *((CPUARMState*)p);
+	//void* cpu_env = *(void**) p;
+	p += sizeof(CPUARMState);
+	
+	int num = *(int *)p;
+	p += sizeof(int);
+	uint32_t arg1 = *((uint32_t*) p);
+	p += sizeof(uint32_t);
+	uint32_t arg2 = *((uint32_t*) p);
+	p += sizeof(uint32_t);
+	uint32_t arg3 = *((uint32_t*) p);
+	p += sizeof(uint32_t);
+	abi_long arg4 = *((uint32_t*) p);
+	p += sizeof(abi_long);
+	abi_long arg5 = *((uint32_t*) p);
+	p += sizeof(abi_long);
+	abi_long arg6 = *((uint32_t*) p);
+	p += sizeof(abi_long);
+	abi_long arg7 = *((uint32_t*) p);
+	p += sizeof(abi_long);
+	abi_long arg8 = *((uint32_t*) p);
+	p += sizeof(abi_long);
+	int idx = *(int*) p;
+	struct syscall_param* syscall_p = (struct syscall_param*)malloc(sizeof(struct syscall_param));
+	syscall_p->cpu_env = env;
+	syscall_p->num = num;
+	syscall_p->arg1 = arg1;
+	syscall_p->arg2 = arg2;
+	syscall_p->arg3 = arg3;
+	syscall_p->arg4 = arg4;
+	syscall_p->arg5 = arg5;
+	syscall_p->arg6 = arg6;
+	syscall_p->arg7 = arg7;
+	syscall_p->arg8 = arg8;
+	syscall_p->idx = idx;
+	
+	fprintf(stderr, "[offload_process_syscall_request]\tCREATING THREAD...received passed syscall to center from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+	pthread_t syscall_thread;
+	pthread_create(&syscall_thread,NULL,process_syscall_thread,(void*)syscall_p);
+	
+	
+	//pthread_mutex_unlock(&socket_mutex);
+	//offload_show_mutex_list();
+}
+
+static void offload_send_syscall_result(int idx, abi_long result)
+{
+	char buf[TARGET_PAGE_SIZE * 2];
+	char *pp = buf + sizeof(struct tcp_msg_header);
+	*((abi_long*)pp) = result;
+	pp += sizeof(abi_long);
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
+	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_RES);
+	send(skt[idx], buf, pp - buf, 0);
+	fprintf(stderr, "[offload_send_syscall_result]\tsent syscall result to #%d packet#%d with ret=%p\n", idx, get_number(), result);
 }

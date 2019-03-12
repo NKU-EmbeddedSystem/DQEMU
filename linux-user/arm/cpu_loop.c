@@ -357,15 +357,51 @@ void cpu_loop(CPUARMState *env)
                             break;
                         }
                     } else {
-                        ret = do_syscall(env,
-                                         n,
-                                         env->regs[0],
-                                         env->regs[1],
-                                         env->regs[2],
-                                         env->regs[3],
-                                         env->regs[4],
-                                         env->regs[5],
-                                         0, 0);
+                        fprintf(stderr, "[arm-cpu]\tdoing syscall, current env: %p\n", env);
+                        extern int offload_server_idx;
+                        if (n == TARGET_NR_futex)
+                        {
+                            fprintf(stderr, "[arm-cpu]\tignoring futex\n");
+                        }
+                        if ((n == TARGET_NR_write
+                            || n == TARGET_NR_read
+                            || n == TARGET_NR_openat
+                            || n == TARGET_NR_open
+                            || n == TARGET_NR_fstat
+                            || n == TARGET_NR_close
+                            || n == TARGET_NR_stat64
+                            || n == TARGET_NR_lstat64
+                            || n == TARGET_NR_fstat64
+                            ) && offload_server_idx>0)
+                        {
+                            fprintf(stderr, "[arm-cpu]\tpassing write to center...\n");
+                            extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
+                                                        abi_long arg2, abi_long arg3, abi_long arg4,
+                                                        abi_long arg5, abi_long arg6, abi_long arg7,
+                                                        abi_long arg8);
+                            ret = pass_syscall(env,
+                                            n,
+                                            env->regs[0],
+                                            env->regs[1],
+                                            env->regs[2],
+                                            env->regs[3],
+                                            env->regs[4],
+                                            env->regs[5],
+                                            0, 0);
+                            fprintf(stderr, "[arm-cpu]\tgot ret = %p\n", ret);
+                        }
+                        else
+                        {
+                            ret = do_syscall(env,
+                                            n,
+                                            env->regs[0],
+                                            env->regs[1],
+                                            env->regs[2],
+                                            env->regs[3],
+                                            env->regs[4],
+                                            env->regs[5],
+                                            0, 0);
+                        }
                         if (ret == -TARGET_ERESTARTSYS) {
                             env->regs[15] -= env->thumb ? 2 : 4;
                         } else if (ret != -TARGET_QEMU_ESIGRETURN) {
