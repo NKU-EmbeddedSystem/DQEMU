@@ -1,3 +1,3 @@
 {
-    "files.associations": {"*.code":"cpp","system_error":"cpp","cerrno":"cpp","*.list":"cpp"}
+    "files.associations": {"*.code":"cpp","system_error":"cpp","cerrno":"cpp","*.list":"cpp","array":"cpp","initializer_list":"cpp","string_view":"cpp","utility":"cpp"}
 }

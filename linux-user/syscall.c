@@ -6373,7 +6373,49 @@ typedef struct {
 } new_thread_info;
 
 extern void offload_client_start(CPUArchState*);
+extern void offload_syscall_daemonize_start(CPUArchState*);
 extern __thread int offload_client_idx;
+
+static void *clone_func_syscall(void *arg)
+{
+    new_thread_info *info = arg;
+    CPUArchState *env;
+    CPUState *cpu;
+    TaskState *ts;
+	
+    rcu_register_thread();
+    tcg_register_thread();
+	
+    env = info->env;
+    cpu = ENV_GET_CPU(env);
+	
+    thread_cpu = cpu;
+	
+	fprintf(stderr, "syscall #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
+    ts = (TaskState *)cpu->opaque;
+    info->tid = gettid();
+    task_settid(ts);
+    if (info->child_tidptr)
+        put_user_u32(info->tid, info->child_tidptr);
+    if (info->parent_tidptr)
+        put_user_u32(info->tid, info->parent_tidptr);
+    /* Enable signals.  */
+    sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
+	
+    /* Signal to the parent that we're ready.  */
+    pthread_mutex_lock(&info->mutex);
+    pthread_cond_broadcast(&info->cond);
+    pthread_mutex_unlock(&info->mutex);
+    /* Wait until the parent has finished initializing the tls state.  */
+    pthread_mutex_lock(&clone_lock);
+    pthread_mutex_unlock(&clone_lock);
+    //cpu_loop(env);
+
+    offload_syscall_daemonize_start(info->env);
+    /* never exits */
+    return NULL;
+}
+
 static void *clone_func(void *arg)
 {
     new_thread_info *info = arg;
@@ -6535,8 +6577,8 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         ret = pthread_create(&info.thread, &attr, clone_func, &info);
         /* TODO: Free new CPU state if thread creation failed.  */
         offload_log(stderr, "[do_fork]\pthread_create res: %d\n", ret);
-
-
+        ret = pthread_create(&info.thread, &attr, clone_func_syscall, &info);
+        offload_log(stderr, "[do_fork]\pthread_create syscall_daemonize res: %d\n", ret);
 
 
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
@@ -8137,12 +8179,13 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                     abi_long arg5, abi_long arg6, abi_long arg7,
                     abi_long arg8)
 {
+    fprintf(stderr, "[DEBUG]\tpoint0\n");
     CPUState *cpu = ENV_GET_CPU(cpu_env);
     abi_long ret;
     struct stat st;
     struct statfs stfs;
     void *p;
-
+    fprintf(stderr, "[DEBUG]\tpoint1\n");
 #if defined(DEBUG_ERESTARTSYS)
     /* Debug-only code for exercising the syscall-restart code paths
      * in the per-architecture cpu main loops: restart every syscall
@@ -8162,9 +8205,10 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
     gemu_log("DEBUGGING syscall %d\n\n", num);
 #endif
     trace_guest_user_syscall(cpu, num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+    fprintf(stderr, "[DEBUG]\tpoint1.5\n");
     if(do_strace)
         print_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6);
-	
+	fprintf(stderr, "[DEBUG]\tpoint2\n");
 	
 	
     switch(num) {
@@ -8250,12 +8294,16 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         break;
 #ifdef TARGET_NR_open
     case TARGET_NR_open:
+        fprintf(stderr, "[DEBUG]\tpoint0\n");
         if (!(p = lock_user_string(arg1)))
             goto efault;
+        fprintf(stderr, "[DEBUG]\tpoint1\n");
         ret = get_errno(do_openat(cpu_env, AT_FDCWD, p,
                                   target_to_host_bitmask(arg2, fcntl_flags_tbl),
                                   arg3));
+        fprintf(stderr, "[DEBUG]\tpoint2\n");
         fd_trans_unregister(ret);
+        fprintf(stderr, "[DEBUG]\tpoint3\n");
         unlock_user(p, arg1, 0);
         break;
 #endif

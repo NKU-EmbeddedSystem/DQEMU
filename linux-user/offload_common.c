@@ -27,6 +27,7 @@ __thread int offload_client_idx;
 #define PRTCTRL_RED "\e[0;31m"
 #define PRTCTRL_GREEN "\e[0;32m"
 #define PRTCTRL_YELLO "\e[0;33m"
+#define PRTCTRL_BLUE "\e[0;34m"
 void offload_log(FILE *f, const char *c, ...)
 {
 	char tmp[1000] = "";
@@ -42,6 +43,10 @@ void offload_log(FILE *f, const char *c, ...)
 	else if (offload_mode == 3)
 	{
 		sprintf(tmp, PRTCTRL_YELLO "[exec #%d]\t", offload_server_idx);
+	}
+	else if (offload_mode == 4)
+	{
+		sprintf(tmp, PRTCTRL_BLUE "[syscall #%d]\t", offload_client_idx);
 	}
 	strcat(tmp, c);
 	strcat(tmp, PRTCTRL_NONE);

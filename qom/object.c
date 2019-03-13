@@ -94,6 +94,8 @@ static TypeImpl *type_table_lookup(const char *name)
     return g_hash_table_lookup(type_table_get(), name);
 }
 
+int cpu_count;
+
 static TypeImpl *type_new(const TypeInfo *info)
 {
     TypeImpl *ti = g_malloc0(sizeof(*ti));
@@ -103,6 +105,7 @@ static TypeImpl *type_new(const TypeInfo *info)
 
     if (type_table_lookup(info->name) != NULL) {
         fprintf(stderr, "Registering `%s' which already exists\n", info->name);
+        
         abort();
     }
 

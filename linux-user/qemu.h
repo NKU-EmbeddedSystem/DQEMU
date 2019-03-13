@@ -344,7 +344,7 @@ extern long safe_syscall_base(int *pending, long number, ...);
 #define safe_syscall(...)                                               \
     ({                                                                  \
         long ret_;                                                      \
-		fprintf(stderr, "in safe_syscall 1, thread_cpi: %p\n", thread_cpu);							\
+		fprintf(stderr, "in safe_syscall 1, thread_cpu: %p\n", thread_cpu);							\
         int *psp_ = &((TaskState *)thread_cpu->opaque)->signal_pending; \
 		fprintf(stderr, "in safe_syscall 2\n");							\
         ret_ = safe_syscall_base(psp_, __VA_ARGS__);                    \

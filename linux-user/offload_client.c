@@ -110,8 +110,22 @@ struct info
 	target_ulong addr;
 };
 
+struct syscall_param
+{
+	void* cpu_env;
+	int num;
+	abi_long arg1;
+	abi_long arg2;
+	abi_long arg3;
+	abi_long arg4;
+	abi_long arg5;
+	abi_long arg6;
+	abi_long arg7;
+	abi_long arg8;
+	int idx;
+};
 
-
+struct syscall_param* syscall_global_pointer;
 
 
 
@@ -202,7 +216,7 @@ static __thread int cmpxchg_flag;
 
 static pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t socket_mutex = PTHREAD_MUTEX_INITIALIZER;
-
+static pthread_mutex_t do_syscall_mutex; static pthread_cond_t do_syscall_cond; int do_syscall_flag;
 
 
 
@@ -272,7 +286,7 @@ static void offload_send_start(void);
 static void offload_send_page_upgrade(target_ulong page_addr);
 
 static void offload_process_page_request(void);
-static void offload_client_daemonize(void);
+void* offload_client_daemonize(void);
 static void offload_client_send_futex_wake_result(int result);
 //int client_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc);
 
@@ -1066,9 +1080,9 @@ static void offload_client_routine(void)
 	//send_page_result();
 }
 
-static void offload_client_daemonize(void)
+void* offload_client_daemonize(void)
 {
-
+	offload_mode = 2;
 	int res;
 	last_flag_recv = 1;
 	last_flag_pending = 1;
@@ -1146,7 +1160,7 @@ static void offload_client_daemonize(void)
 					break;
 				
 				case TAG_OFFLOAD_SYSCALL_REQ:
-					fprintf(stderr, "[offload_client_daemonize]\ttag: syscall request\n");
+					fprintf(stderr, "[offload_client_daemonize]\ttag: syscall request with size = %d\n", tcp_header->size);
 					try_recv(tcp_header->size);
 					offload_process_syscall_request();
 					break;
@@ -1251,6 +1265,71 @@ void* offload_center_client_start(void *arg)
 	close_network();
 	return NULL;
 }
+
+void syscall_daemonize(void)
+{
+	offload_mode = 4;
+	pthread_mutex_init(&do_syscall_mutex,NULL);
+	pthread_mutex_init(&do_syscall_cond,NULL);
+	while (1)
+	{
+		do_syscall_flag = 0;
+		fprintf(stderr, "[syscall_daemonize]\twaiting for new syscall...\n");
+		pthread_mutex_lock(&do_syscall_mutex);
+		while (do_syscall_flag == 0)
+		{
+			pthread_cond_wait(&do_syscall_cond,&do_syscall_mutex);
+		}
+		pthread_mutex_unlock(&do_syscall_mutex);
+		fprintf(stderr, "[syscall_daemonize]\tgot new syscall!\n");
+		struct syscall_param* syscall_p = syscall_global_pointer;
+		if (!syscall_p) 
+		{
+			fprintf(stderr,"[syscall_daemonize]\tNULLptr!\n");
+			continue;
+		}
+		CPUARMState* cpu_env = (CPUARMState*)syscall_p->cpu_env;
+		int num = syscall_p->num;
+		abi_long arg1 = syscall_p->arg1;
+		abi_long arg2 = syscall_p->arg2;
+		abi_long arg3 = syscall_p->arg3;
+		abi_long arg4 = syscall_p->arg4;
+		abi_long arg5 = syscall_p->arg5;
+		abi_long arg6 = syscall_p->arg6;
+		abi_long arg7 = syscall_p->arg7;
+		abi_long arg8 = syscall_p->arg8;
+		int idx = syscall_p->idx;
+		fprintf(stderr, "[syscall_daemonize]\tprocessing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+		extern void print_syscall(int num,
+				abi_long arg1, abi_long arg2, abi_long arg3,
+				abi_long arg4, abi_long arg5, abi_long arg6);
+		print_syscall(num,
+				arg1, arg2, arg3,
+				arg4, arg5, arg6);
+		fprintf(stderr, "[syscall_daemonize]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+		extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
+						abi_long arg2, abi_long arg3, abi_long arg4,
+						abi_long arg5, abi_long arg6, abi_long arg7,
+						abi_long arg8);
+		abi_long ret = do_syscall(cpu_env,
+					num,
+					arg1,
+					arg2,
+					arg3,
+					arg4,
+					arg5,
+					arg6,
+					0, 0);
+		offload_send_syscall_result(idx, ret);
+		free(syscall_p->cpu_env);
+		free(syscall_p);
+		syscall_global_pointer = NULL;
+		if (syscall_global_pointer)
+			fprintf(stderr, "[syscall_daemonize]\tstill exists??\n");
+		do_syscall_flag = 0;
+	}
+}
+
 void offload_client_start(CPUArchState *the_env)
 {
 
@@ -1272,8 +1351,15 @@ void offload_client_start(CPUArchState *the_env)
 
 	client_env = the_env;
 	offload_send_start();
-
+	//pthread_t syscall_daemonize_thread;
+	//pthread_create(&syscall_daemonize_thread, NULL, syscall_daemonize, NULL);
+	//pthread_t daemonize;
+	//pthread_create(&daemonize,NULL,offload_client_daemonize,NULL);
 	offload_client_daemonize();
+
+	
+
+
 
 	fprintf(stderr, "[offload_client_start]\tready to close network\n");
 
@@ -1284,7 +1370,39 @@ void offload_client_start(CPUArchState *the_env)
 	return;
 }
 
+void offload_syscall_daemonize_start(CPUArchState *the_env)
+{
 
+	offload_mode = 4;
+
+	p = BUFFER_PAYLOAD_P;
+
+	//pthread_mutex_init(&page_request_map_mutex[offload_client_idx], NULL);
+
+
+	fprintf(stderr, "[offload_syscall_daemonize_start]\tinitialize");
+	//offload_client_init();
+
+
+	int res;
+	//pthread_t syscall_daemonize_thread;
+	//pthread_create(&syscall_daemonize_thread, NULL, syscall_daemonize, NULL);
+	//pthread_t daemonize;
+	//pthread_create(&daemonize,NULL,offload_client_daemonize,NULL);
+	syscall_daemonize();
+
+	
+
+
+
+	fprintf(stderr, "[offload_syscall_daemonize_start]\tready to close network\n");
+
+	close_network();
+
+
+	printf("[offload_syscall_daemonize_start]\toffloading finished\n");
+	return;
+}
 
 
 /*
@@ -1768,21 +1886,6 @@ static void offload_client_futex_epilogue(target_ulong page_addr)
 	pthread_mutex_unlock(&pmd->owner_set_mutex);
 }
 
-struct syscall_param
-{
-	void* cpu_env;
-	int num;
-	abi_long arg1;
-	abi_long arg2;
-	abi_long arg3;
-	abi_long arg4;
-	abi_long arg5;
-	abi_long arg6;
-	abi_long arg7;
-	abi_long arg8;
-	int idx;
-};
-
 void* process_syscall_thread(void* syscall_pp)
 {
 	struct syscall_param* syscall_p = (struct syscall_param*)syscall_pp;
@@ -1819,7 +1922,7 @@ void* process_syscall_thread(void* syscall_pp)
 				arg6,
 				0, 0);
 	offload_send_syscall_result(idx, ret);
-	free(cpu_env);
+	//free(cpu_env);
 }
 
 static void offload_process_syscall_request(void)
@@ -1863,12 +1966,39 @@ static void offload_process_syscall_request(void)
 	syscall_p->arg7 = arg7;
 	syscall_p->arg8 = arg8;
 	syscall_p->idx = idx;
-	
-	fprintf(stderr, "[offload_process_syscall_request]\tCREATING THREAD...received passed syscall to center from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+	syscall_global_pointer = syscall_p;
+	pthread_mutex_lock(&do_syscall_mutex);
+	do_syscall_flag = 1;
+	pthread_cond_signal(&do_syscall_cond);
+	pthread_mutex_unlock(&do_syscall_mutex);
+	fprintf(stderr, "[offload_process_syscall_request]\treceived passed syscall to center from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+	/*
 	pthread_t syscall_thread;
 	pthread_create(&syscall_thread,NULL,process_syscall_thread,(void*)syscall_p);
 	
-	
+	fprintf(stderr, "[process_syscall_thread]\tprocessing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+	extern void print_syscall(int num,
+              abi_long arg1, abi_long arg2, abi_long arg3,
+              abi_long arg4, abi_long arg5, abi_long arg6);
+	print_syscall(num,
+              arg1, arg2, arg3,
+              arg4, arg5, arg6);
+	fprintf(stderr, "[process_syscall_thread]\teabi:%p\n",((CPUARMState *)env)->eabi);
+	extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
+                    abi_long arg2, abi_long arg3, abi_long arg4,
+                    abi_long arg5, abi_long arg6, abi_long arg7,
+                    abi_long arg8);
+	abi_long ret = do_syscall(env,
+				num,
+				arg1,
+				arg2,
+				arg3,
+				arg4,
+				arg5,
+				arg6,
+				0, 0);
+	offload_send_syscall_result(idx, ret);
+	*/
 	//pthread_mutex_unlock(&socket_mutex);
 	//offload_show_mutex_list();
 }

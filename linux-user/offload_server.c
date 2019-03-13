@@ -372,7 +372,7 @@ void offload_server_send_mutex_request(uint32_t mutex_addr)
 		fprintf(stderr, "[cmpxchg_request]\tsent mutex request %p failed\n", mutex_addr);
 		exit(0);
 	}
-	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...\n", mutex_addr, get_number());
+	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...offload_server_idx=%d\n", mutex_addr, get_number(),offload_server_idx);
 	mutex_ready_flag = 0;
 	pthread_mutex_lock(&mutex_recv_mutex);
 	while (mutex_ready_flag == 0)

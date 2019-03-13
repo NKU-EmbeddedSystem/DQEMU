@@ -864,8 +864,7 @@ int main(int argc, char **argv, char **envp)
 	offload_server_idx = 0;
 	optind = parse_args(argc, argv);
 	
-	
-	if (offload_mode == 1)
+    if (offload_mode == 1)
 	{
 		guest_base = 0x3c00f000;
         fprintf(stderr, ">>>>>>>>>>>> server# %d guest_base: %x\n", offload_server_idx, guest_base);
@@ -882,7 +881,8 @@ int main(int argc, char **argv, char **envp)
 		fprintf(stderr, "invalid offload mode\n");
 		exit(0);
 	}
-	
+
+	fprintf(stderr, "[INIT DEBUG]\tPpoint1\n");
 	
     module_call_init(MODULE_INIT_TRACE);
     qemu_init_cpu_list();
@@ -912,7 +912,7 @@ int main(int argc, char **argv, char **envp)
 
     qemu_add_opts(&qemu_trace_opts);
 
-    
+    fprintf(stderr, "[INIT DEBUG]\tPpoint2\n");
 	
 	
 
@@ -942,7 +942,7 @@ int main(int argc, char **argv, char **envp)
             _exit(EXIT_FAILURE);
         }
     }
-
+    fprintf(stderr, "[INIT DEBUG]\tPpoint3\n");
     if (cpu_model == NULL) {
         cpu_model = cpu_get_model(get_elf_eflags(execfd));
     }
@@ -1004,7 +1004,7 @@ int main(int argc, char **argv, char **envp)
             mmap_next_start = reserved_va;
         }
     }
-
+    fprintf(stderr, "[INIT DEBUG]\tPpoint4\n");
     /*
      * Read in mmap_min_addr kernel parameter.  This value is used
      * When loading the ELF image to determine whether guest_base
@@ -1064,7 +1064,7 @@ int main(int argc, char **argv, char **envp)
     for (wrk = target_environ; *wrk; wrk++) {
         g_free(*wrk);
     }
-
+    fprintf(stderr, "[INIT DEBUG]\tPpoint1\n");
     g_free(target_environ);
 
     if (qemu_loglevel_mask(CPU_LOG_PAGE)) {
@@ -1105,7 +1105,7 @@ int main(int argc, char **argv, char **envp)
         }
         gdb_handlesig(cpu, 0);
     }
-	
+
 	fprintf(stderr, "offload client mode\n");
 	
 	fprintf(stderr, "size: %x, mask: %x\n", qemu_host_page_size, qemu_host_page_mask);
@@ -1127,7 +1127,7 @@ int main(int argc, char **argv, char **envp)
 	pthread_mutex_lock(&offload_center_init_mutex);
 	pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
 	pthread_mutex_unlock(&offload_center_init_mutex);
-	
+
 	
 	
 	cpu_loop(env);
