@@ -730,6 +730,7 @@ static void offload_server_daemonize(void)
 			case TAG_OFFLOAD_SYSCALL_RES:
 				fprintf(stderr, "[offload_server_daemonize]\ttag: syscall result, size = %d\n", size);
 				try_recv(size);
+				//fprintf(stderr, "[offload_server_daemonize]\treceived.\n");
 				offload_server_process_syscall_result();
 				break;
 
