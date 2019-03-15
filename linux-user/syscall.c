@@ -7541,9 +7541,9 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
     case FUTEX_WAIT_BITSET:
 		
 		
-		fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x\n", uaddr, g2h(uaddr));
+		fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
 		//return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
-		
+		//*(uint32_t*)g2h(uaddr) = 0;
 		
 		
         if (timeout) {
@@ -7552,6 +7552,8 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
         } else {
             pts = NULL;
         }
+        if (pts == NULL)
+            pts = 3;
         return get_errno(safe_futex(g2h(uaddr), op, tswap32(val),
                          pts, NULL, val3));
 						 
@@ -8253,6 +8255,31 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         fprintf(stderr,"DDDDDDDDDDDDDDDDDOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNTTTTTTTTTTTTT\n");
         //will result in process termination, never do that
         //_exit(arg1);
+
+        /* tell center that we exited */
+        TaskState *ts;
+        QTAILQ_REMOVE(&cpus, cpu, node);
+
+        cpu_list_unlock();
+        ts = cpu->opaque;
+        fprintf(stderr,"[exit]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+        if (ts->child_tidptr) {
+            *(uint32_t*)g2h(ts->child_tidptr) = 0;
+            put_user_u32(0, ts->child_tidptr);
+            extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
+                                                        abi_long arg2, abi_long arg3, abi_long arg4,
+                                                        abi_long arg5, abi_long arg6, abi_long arg7,
+                                                        abi_long arg8);
+            pass_syscall(cpu_env,TARGET_NR_futex,ts->child_tidptr, FUTEX_WAKE, INT_MAX,
+                        NULL, NULL, 0, 0, 0);
+        }
+        thread_cpu = NULL;
+        object_unref(OBJECT(cpu));
+        g_free(ts);
+        fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
+        //rcu_unregister_thread();
+        //pthread_exit(NULL);
+
 
         extern void cpu_exit_signal(void);
         cpu_exit_signal();

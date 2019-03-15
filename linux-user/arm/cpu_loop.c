@@ -373,6 +373,7 @@ void cpu_loop(CPUARMState *env)
                             || n == TARGET_NR_lstat64
                             || n == TARGET_NR_fstat64
                             || n == TARGET_NR_gettimeofday
+                            || n == TARGET_NR_futex
                             ) && offload_server_idx>0)
                         {
                             fprintf(stderr, "[arm-cpu]\tpassing write to center...\n");

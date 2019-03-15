@@ -1129,7 +1129,7 @@ int main(int argc, char **argv, char **envp)
 	pthread_mutex_unlock(&offload_center_init_mutex);
 
 	
-	
+	offload_mode = 3;
 	cpu_loop(env);
     /* never exits */
     return 0;

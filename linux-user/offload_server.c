@@ -68,6 +68,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
                     abi_long arg8);
 int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_process_syscall_result(void);
+static void offload_process_tid(void);
 
 // used along with pthread_cond, indicate whether the page required by the execution thread is received.
 static int page_recv_flag; static pthread_mutex_t page_recv_mutex; static pthread_cond_t page_recv_cond;
@@ -136,8 +137,24 @@ static void load_cpu(void)
 	
 	//memcpy(env, p, sizeof(CPUARMState));
 	*((CPUARMState *) env) = *((CPUARMState *) p);
-	p += sizeof(CPUARMState);
 
+	p += sizeof(CPUARMState);
+	
+
+	fprintf(stderr,"[load_cpu]\tenv: %p\n", env);
+	CPUState *cpu = ENV_GET_CPU(env);
+	fprintf(stderr,"[load_cpu]\tcpu: %p\n", cpu);
+	TaskState *ts1;
+
+	fprintf(stderr,"[load_cpu]\topaque: %p\n", cpu->opaque);
+	ts1 = cpu->opaque;
+	fprintf(stderr,"[load_cpu]\tNOW child_tidptr: %p\n", ts1->child_tidptr);
+	/* TaskState is a void*, we've to set it mannually */
+	TaskState* ts = malloc(sizeof(TaskState));
+	*ts = *((TaskState*) p);
+	p += sizeof(TaskState);
+	cpu->opaque = ts;
+	fprintf(stderr,"[load_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
 	/*vfp_set_fpscr(env, *((uint32_t*) p));
 	fprintf(stderr, "fpscr: %d\n", *((uint32_t*) p));
 	p += sizeof(uint32_t);
@@ -365,7 +382,9 @@ void offload_server_send_mutex_request(uint32_t mutex_addr)
 	pp += sizeof(uint32_t);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_REQUEST);
-
+	/* we should lock first in case verified returns before we lock!!!!!! */
+	pthread_mutex_lock(&mutex_recv_mutex);
+	
 	int res = send(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
@@ -374,7 +393,6 @@ void offload_server_send_mutex_request(uint32_t mutex_addr)
 	}
 	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...offload_server_idx=%d\n", mutex_addr, get_number(),offload_server_idx);
 	mutex_ready_flag = 0;
-	pthread_mutex_lock(&mutex_recv_mutex);
 	while (mutex_ready_flag == 0)
 	{
 		pthread_cond_wait(&mutex_recv_cond, &mutex_recv_mutex);
@@ -734,6 +752,11 @@ static void offload_server_daemonize(void)
 				offload_server_process_syscall_result();
 				break;
 
+			case TAG_OFFLOAD_YOUR_TID:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: TID, size = %d\n", size);
+				try_recv(size);
+				offload_process_tid();
+				break;
 			default:
 				fprintf(stderr, "[offload_server_daemonize]\tunkown tag: %d\n", tag);
 				try_recv(size);
@@ -1045,4 +1068,27 @@ static void offload_server_process_syscall_result(void)
 	pthread_cond_signal(&syscall_recv_cond);
 	pthread_mutex_unlock(&syscall_recv_mutex);
 	//if (mutex_ready_flag == 0) offload_server_process_mutex_verified();
+}
+
+static void offload_process_tid(void)
+{
+	p = net_buffer;
+	uint32_t tid = *((uint32_t*)p);	
+	p += sizeof(uint32_t);
+	fprintf(stderr,"[offload_process_tid]\treceived child_tidptr: %p\n", tid);
+	return ;
+	//extern CPUArchState *env;
+	if (!env)
+	{
+		fprintf(stderr,"[offload_process_tid]\tenv: %p\n", env);
+	}
+	CPUState *cpu = ENV_GET_CPU((CPUArchState *)env);
+	if (!cpu)
+	{
+		fprintf(stderr,"[offload_process_tid]\tcpu: %p\n", cpu);
+	}
+	TaskState *ts;
+	ts = cpu->opaque;
+	ts->child_tidptr = tid;
+	fprintf(stderr,"[offload_process_tid]\tNOW child_tidptr: %p\n", ts->child_tidptr);
 }

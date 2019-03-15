@@ -103,6 +103,7 @@ static void offload_send_mutex_verified(int);
 static void offload_process_mutex_done(void);
 static void offload_send_syscall_result(int,abi_long);
 static void offload_process_syscall_request(void);
+static void offload_send_tid(int idx, uint32_t tid);
 //int requestor_idx, target_ulong addr, int perm
 struct info
 {
@@ -584,6 +585,15 @@ static void dump_cpu(void)
 
 	p += sizeof(CPUARMState);
 
+	fprintf(stderr,"[dump_cpu]\tenv: %p\n", client_env);
+	CPUState *cpu = ENV_GET_CPU((CPUArchState *)client_env);
+	fprintf(stderr,"[dump_cpu]\tcpu: %p\n", cpu);
+	TaskState *ts;
+	fprintf(stderr,"[load_cpu]\topaque: %p\n", cpu->opaque);
+	ts = cpu->opaque;
+	fprintf(stderr,"[dump_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+	*((TaskState*)p) = *ts;
+	p += sizeof(TaskState);
 	/**((uint32_t*)p) = (uint32_t)vfp_get_fpscr(env);
 	p += sizeof(uint32_t);
 
@@ -637,12 +647,6 @@ static void offload_send_start(void)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
-
-	/*for (int i = 0; i < 2000; i++)
-	{
-		fprintf(stderr, "%d ", (uint32_t *)(net_buffer + i));
-	}*/
-
 	res = send(skt[offload_client_idx], net_buffer, (p - net_buffer), 0);
 
 	//pthread_mutex_unlock(&socket_mutex);
@@ -1248,6 +1252,7 @@ extern pthread_mutex_t offload_center_init_mutex; extern pthread_cond_t offload_
 
 void* offload_center_client_start(void *arg)
 {
+	offload_mode = 2;
 	/*TaskState *ts;
 	CPUArchState *new_env = (CPUArchState *) arg;
 	CPUState *new_cpu = ENV_GET_CPU(new_env);
@@ -1260,8 +1265,8 @@ void* offload_center_client_start(void *arg)
 
 
 	//sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
-
-	offload_mode = 2;
+	//CPUArchState *env = (CPUArchState *) arg;
+	
 	offload_client_init();
 	pthread_mutex_lock(&offload_center_init_mutex);
 	pthread_cond_signal(&offload_center_init_cond);
@@ -1361,6 +1366,18 @@ void syscall_daemonize(void)
 	}
 }
 
+void* thread_end_cleanup(CPUArchState *the_env)
+{
+	fprintf(stderr, "[thread_end_cleanup]\tcleaning up\n");
+	CPUState *cpu = ENV_GET_CPU((CPUArchState *)the_env);
+	TaskState *ts;
+	ts = cpu->opaque;
+	fprintf(stderr,"[offload_client_start]\tchild_tidptr: %p\n", ts->child_tidptr);
+	put_user_u32(0, ts->child_tidptr);
+	//do_syscall(g2h(ts->child_tidptr), FUTEX_WAKE, INT_MAX,
+	//			NULL, NULL, 0);
+}
+
 void offload_client_start(CPUArchState *the_env)
 {
 
@@ -1371,10 +1388,10 @@ void offload_client_start(CPUArchState *the_env)
 	//pthread_mutex_init(&page_request_map_mutex[offload_client_idx], NULL);
 
 
-	fprintf(stderr, "[offload_client_start]\tinitialize");
+	fprintf(stderr, "[offload_client_start]\tinitialize\n");
 	offload_client_init();
 
-
+	
 	int res;
 
 
@@ -1386,6 +1403,17 @@ void offload_client_start(CPUArchState *the_env)
 	//pthread_create(&syscall_daemonize_thread, NULL, syscall_daemonize, NULL);
 	//pthread_t daemonize;
 	//pthread_create(&daemonize,NULL,offload_client_daemonize,NULL);
+
+	/* send server its tid */
+	/*
+	CPUState *cpu = ENV_GET_CPU((CPUArchState *)the_env);
+	TaskState *ts;
+	ts = cpu->opaque;
+	fprintf(stderr,"[offload_client_start]\tsending child_tidptr: %p\n", ts->child_tidptr);
+	*/
+	//offload_send_tid(offload_client_idx, ts->child_tidptr);
+
+
 	offload_client_daemonize();
 
 	
@@ -1596,6 +1624,22 @@ static void offload_send_mutex_verified(int idx)
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_VERYFIED);
 	send(skt[idx], buf, pp - buf, 0);
 	fprintf(stderr, "[offload_send_cmpxchg_verified]\tsent cmpxchg verified to #%d packet#%d\n", idx, get_number());
+}
+
+static void offload_send_tid(int idx, uint32_t tid)
+{
+	char buf[TARGET_PAGE_SIZE * 2];
+	char *pp = buf + sizeof(struct tcp_msg_header);
+	*((uint32_t*)pp) = tid;
+	fprintf(stderr, "[offload_send_tid]\tsent tid = %p to #%d packet#%d\n", *(uint32_t*)pp, idx, get_number());
+	pp += sizeof(uint32_t);
+	
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
+	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_YOUR_TID);
+	
+	
+	send(skt[idx], buf, pp - buf, 0);
+	fprintf(stderr, "[offload_send_tid]\tsent tid = %p to #%d packet#%d\n", tid, idx, get_number());
 }
 
 static void offload_process_page_ack(void)
