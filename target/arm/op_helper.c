@@ -1458,9 +1458,14 @@ void HELPER(offload_cmpxchg_prelude)(uint32_t addr, uint32_t newv, uint32_t cmpv
 	//offload_server_send_cmpxchg_start((((uint32_t)addr) / 0x1000) * 0x1000);
     //fprintf(stderr, "helper_offload_cmpxchg_prelude\taddr:%p, cmpv: %d, newv: %d\n", addr, cmpv, newv);
     // if this is lock
+    if (cmpv == *(uint32_t*)g2h(addr))
+    {}
+    else
+
     if (cmpv <= newv)
     {
-        fprintf(stderr, "helper_offload_cmpxchg_prelude\taddr:%p, cmpv: %d, newv: %d\n", addr, cmpv, newv);
+        fprintf(stderr, "helper_offload_cmpxchg_prelude\taddr:%p, cmpv: %d, newv: %d, now val:%p\n", addr, cmpv, newv, *(uint32_t*)g2h(addr));
+
     	offload_server_send_cmpxchg_start((uint32_t)addr);
 
     }

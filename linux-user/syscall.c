@@ -8274,6 +8274,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                         NULL, NULL, 0, 0, 0);
         }
         thread_cpu = NULL;
+        cpu_list_unlock();
         object_unref(OBJECT(cpu));
         g_free(ts);
         fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
