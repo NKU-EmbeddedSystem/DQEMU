@@ -394,6 +394,9 @@ void cpu_loop(CPUARMState *env)
                         }
                         else
                         {
+                            //extern static pthread_mutex_t offload_center_clone_mutex;
+                            //pthread_mutex_lock(&offload_center_clone_mutex);
+                            //pthread_mutex_unlock(&offload_center_clone_mutex);
                             ret = do_syscall(env,
                                             n,
                                             env->regs[0],

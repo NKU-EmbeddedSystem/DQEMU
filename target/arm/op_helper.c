@@ -1477,6 +1477,9 @@ void HELPER(offload_cmpxchg_epilogue)(uint32_t addr, uint32_t newv, uint32_t cmp
 {
     
     // if this is UNLOCK
+    if (1)
+    {}
+    else
     if (cmpv > newv)
     {
         fprintf(stderr, "helper_offload_cmpxchg_epilogue\taddr:%p, cmpv: %d, newv: %d\n", addr, cmpv, newv);

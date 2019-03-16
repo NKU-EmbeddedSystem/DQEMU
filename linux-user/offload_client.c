@@ -128,7 +128,8 @@ struct syscall_param
 
 struct syscall_param* syscall_global_pointer;
 
-
+static pthread_mutex_t clone_syscall_mutex;
+static int testint = 233;
 
 
 
@@ -276,7 +277,7 @@ static uint32_t get_tag(void)
 static __thread int page_recv_flag; static __thread pthread_mutex_t page_recv_mutex; static __thread pthread_cond_t page_recv_cond;
 
 
-static void close_network(void);
+void close_network(void);
 
 static void dump_cpu(void);
 
@@ -360,14 +361,14 @@ static void offload_client_init(void)
 	bzero(&(server_addr.sin_zero), 8);
 	int struct_len = sizeof(struct sockaddr_in);
 	//fprintf(stderr, "[client]\toffload index: %d\n", offload_client_idx);
-	fprintf(stderr, "[client]\tconnecting to server, port# %d\n", server_port_of(offload_client_idx));
+	fprintf(stderr, "[offload_client_init]\tconnecting to server, port# %d\n", server_port_of(offload_client_idx));
 	if (connect(skt[offload_client_idx],(struct sockaddr*) &server_addr, struct_len) == -1)
 	{
 		fprintf(stderr, "[offload_client_init]\tconnect port# server_port_of(offload_client_idx) failed, errno: %d\n", errno);
 		exit(0);
 	}
 
-	fprintf(stderr,"[client]\tconnecting succeed, client index# %d, skt: %d\n", offload_client_idx, skt[offload_client_idx]);
+	fprintf(stderr,"[offload_client_init]\tconnecting succeed, client index# %d, skt: %d\n", offload_client_idx, skt[offload_client_idx]);
 
 
 	fcntl(skt[offload_client_idx], F_SETFL, fcntl(skt[offload_client_idx], F_GETFL) | O_NONBLOCK);
@@ -395,7 +396,7 @@ static void offload_client_init(void)
 }
 
 
-static void close_network(void)
+void close_network(void)
 {
 	// todo: when a worker finished, should he flushes all his pages back to the center?
 	close(skt[offload_client_idx]);
@@ -579,6 +580,8 @@ static void dump_code(void)
 
 static void dump_cpu(void)
 {
+	//offload_center_clone_mutex;
+	//pthread_mutex_lock(&offload_center_clone_mutex);
 	*((CPUARMState *) p) = *client_env;
 
 
@@ -594,6 +597,7 @@ static void dump_cpu(void)
 	fprintf(stderr,"[dump_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
 	*((TaskState*)p) = *ts;
 	p += sizeof(TaskState);
+	//pthread_mutex_unlock(&offload_center_clone_mutex);
 	/**((uint32_t*)p) = (uint32_t)vfp_get_fpscr(env);
 	p += sizeof(uint32_t);
 
@@ -627,6 +631,7 @@ static void offload_send_start(void)
 
 
 	//printf(">>>>>>>>>>\n");
+	fprintf(stderr, "[client]\tdumping cpu\n");
 	dump_cpu();
 	fprintf(stderr, "[offload_send_start]\tregisters:\n");
 
@@ -1372,7 +1377,7 @@ void* thread_end_cleanup(CPUArchState *the_env)
 	CPUState *cpu = ENV_GET_CPU((CPUArchState *)the_env);
 	TaskState *ts;
 	ts = cpu->opaque;
-	fprintf(stderr,"[offload_client_start]\tchild_tidptr: %p\n", ts->child_tidptr);
+	fprintf(stderr,"[thread_end_cleanup]\tchild_tidptr: %p\n", ts->child_tidptr);
 	put_user_u32(0, ts->child_tidptr);
 	//do_syscall(g2h(ts->child_tidptr), FUTEX_WAKE, INT_MAX,
 	//			NULL, NULL, 0);
@@ -1398,7 +1403,9 @@ void offload_client_start(CPUArchState *the_env)
 
 
 	client_env = the_env;
+	//pthread_mutex_lock(&clone_syscall_mutex);
 	offload_send_start();
+	//pthread_mutex_unlock(&clone_syscall_mutex);
 	//pthread_t syscall_daemonize_thread;
 	//pthread_create(&syscall_daemonize_thread, NULL, syscall_daemonize, NULL);
 	//pthread_t daemonize;
@@ -1414,18 +1421,7 @@ void offload_client_start(CPUArchState *the_env)
 	//offload_send_tid(offload_client_idx, ts->child_tidptr);
 
 
-	offload_client_daemonize();
-
 	
-
-
-
-	fprintf(stderr, "[offload_client_start]\tready to close network\n");
-
-	close_network();
-
-
-	printf("[offload_client_start]\toffloading finished\n");
 	return;
 }
 

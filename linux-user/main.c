@@ -625,6 +625,7 @@ extern void* offload_center_server_start(void*);
 extern void* offload_center_client_start(void*);
 
 pthread_mutex_t offload_center_init_mutex; pthread_cond_t offload_center_init_cond;
+
 void offload_server_qemu_init(void);
 void offload_server_qemu_init(void)
 {
@@ -1118,7 +1119,7 @@ int main(int argc, char **argv, char **envp)
 	//new_thread_info new_info;
 	/*CPUArchState new_env;
 	offload_get_new_thread_info(env, &new_env);*/
-	
+	//pthread_mutex_init(&offload_center_clone_mutex, NULL);
 	pthread_mutex_init(&offload_center_init_mutex, NULL);
 	pthread_cond_init(&offload_center_init_cond, NULL);
 	
