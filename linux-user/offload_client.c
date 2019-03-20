@@ -285,7 +285,7 @@ static int dump_self_maps(void);
 static void dump_brk(void);
 static void dump_code(void);
 static void offload_send_start(void);
-static void offload_send_page_upgrade(target_ulong page_addr);
+static void offload_send_page_upgrade(int idx, target_ulong page_addr);
 
 static void offload_process_page_request(void);
 void* offload_client_daemonize(void);
@@ -665,21 +665,17 @@ static void offload_send_start(void)
 pthread_mutex_t page_request_map_mutex;
 
 /* upgrade page permission */
-static void offload_send_page_upgrade(target_ulong page_addr)
+static void offload_send_page_upgrade(int idx, target_ulong page_addr)
 {
 	//pthread_mutex_lock(&socket_mutex);
 	p = BUFFER_PAYLOAD_P;
-
 	*((target_ulong *) p) = page_addr;
 	p += sizeof(target_ulong);
-
-
-
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_UPGRADE);
-
+	fprintf(stderr, "[offload_send_page_upgrade]\tsending upgrade in page %p to #%d\n", page_addr, idx);
 	int res;
-	if (res = send(skt[offload_client_idx], net_buffer, p - net_buffer, 0) < 0)
+	if (res = send(skt[idx], net_buffer, p - net_buffer, 0) < 0)
 	{
 		fprintf(stderr, "page upgrade sending failed\n");
 	}
@@ -706,11 +702,13 @@ void print_holder(uint32_t page_addr)
 
 void* offload_client_fetch_page_thread(void* param)
 {
-	offload_mode = 2;
+	offload_mode = 5;
+	
 	struct info* info = (struct info*)param;
 	int requestor_idx = info->requestor_idx;
 	target_ulong addr = info->addr;
 	int perm = info->perm;
+	offload_client_idx = requestor_idx;
 	free(info);
 	fprintf(stderr, "[offload_fetch_page_thread]\tpending request working, addr:%p, idx:%d, perm:%d\n", addr, requestor_idx, perm);
 	target_ulong page_addr = PAGE_OF(addr);
@@ -737,24 +735,34 @@ void* offload_client_fetch_page_thread(void* param)
 	pmd->requestor = requestor_idx;
 	if (perm == 2)
 	{
-		pmd->invalid_count = 0;
-		/* invalid_count = the number of sharing copies to invalidate */
-		for (int i = 0; i < pmd->owner_set.size; i++)
-		{
+			pmd->invalid_count = 0;
+			/* read->write, only one */
+			if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
+			{
+				fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
+				offload_send_page_upgrade(requestor_idx, page_addr);
+				pthread_mutex_unlock(&pmd->owner_set_mutex);
+			}
+			else
+			/* invalid_count = the number of sharing copies to invalidate */
+			for (int i = 0; i < pmd->owner_set.size; i++)
+			{
+				
+				int idx = pmd->owner_set.element[i];
+				/* if read->write, donnot ask itself to send the page!!!!! */
+				//TODO: read->write, when done simply donnot send page content
+				//again.
+				
+				if (idx == requestor_idx) 
+				{
+					continue;
+				}
+				
+				pmd->invalid_count++;
+				/* invalidate pages on other threads, retrieve the permission */
+				offload_send_page_request(idx, page_addr, 2);
+			}
 			
-			int idx = pmd->owner_set.element[i];
-			/* if read->write, donnot ask itself to send the page!!!!! */
-			//TODO: read->write, when done simply donnot send page content
-			//again.
-			//if (idx == requestor_idx) 
-			//{
-			//	continue;
-			//}
-			pmd->invalid_count++;
-			/* invalidate pages on other threads, retrieve the permission */
-			offload_send_page_request(idx, page_addr, 2);
-		}
-		
 	}
 	else if (perm == 1)
 	{
@@ -794,13 +802,18 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 	}
 
 	//pthread_mutex_lock(&pmd->owner_set_mutex);
-	int res = pthread_mutex_trylock(&pmd->owner_set_mutex);
+	int res = 1;//pthread_mutex_trylock(&pmd->owner_set_mutex);
 
-	if (res != 0)
+	if ((res != 0 )||1)
 	{
 		/* trylock failed, someone is asking for the page */
-
+		
 		offload_log(stderr, "[offload_client_fetch_page]\tlock failed, count: %d, holder: %d throwing new thread...\n", pmd->mutex_count, pmd->mutex_holder);
+		// if (pmd->mutex_holder == requestor_idx)
+		// {
+		// 	fprintf(stderr, "[offload_client_fetch_page]\tlock failed, but requestor #%d == holder #%d, ignoring...\n", requestor_idx, pmd->mutex_holder);
+		// 	return;
+		// }
 		struct info* param = (struct info*)malloc(sizeof(struct info));
 		param->requestor_idx = requestor_idx;
 		param->addr = addr;
@@ -834,6 +847,14 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 		if (perm == 2)
 		{
 			pmd->invalid_count = 0;
+			/* read->write, only one */
+			if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
+			{
+				fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
+				offload_send_page_upgrade(requestor_idx, page_addr);
+				pthread_mutex_unlock(&pmd->owner_set_mutex);
+			}
+			else
 			/* invalid_count = the number of sharing copies to invalidate */
 			for (int i = 0; i < pmd->owner_set.size; i++)
 			{
@@ -842,14 +863,17 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 				/* if read->write, donnot ask itself to send the page!!!!! */
 				//TODO: read->write, when done simply donnot send page content
 				//again.
+				
 				if (idx == requestor_idx) 
 				{
 					continue;
 				}
+				
 				pmd->invalid_count++;
 				/* invalidate pages on other threads, retrieve the permission */
 				offload_send_page_request(idx, page_addr, 2);
 			}
+			
 		}
 		else if (perm == 1)
 		{
@@ -1561,7 +1585,7 @@ static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t 
 
 	send(skt[idx], buf, pp - buf, 0);
 
-	fprintf(stderr, "[offload_send_page_content]\tsent page content %x, perm %d, packet#%d\n", page_addr, perm, get_number());
+	fprintf(stderr, "[offload_send_page_content]\tsent page content %x to #%d, perm %d, packet#%d\n", page_addr, idx, perm, get_number());
 	//pthread_mutex_unlock(&socket_mutex);
 }
 
@@ -1712,13 +1736,14 @@ static void offload_process_page_content(void)
 	uint32_t perm = *(uint32_t *) p;
 	p += sizeof(uint32_t);
 
-	fprintf(stderr, "[offload_process_page_content]\tpage %x, perm %d\n", page_addr, perm);
+	
 	int index = page_addr >> PAGE_BITS;
 	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
 	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
 	PageMapDesc *pmd = &page_map_table[index1][index2];
 
 	int requestor_idx = pmd->requestor;
+	fprintf(stderr, "[offload_process_page_content]\tpage %x, perm %d, for #%d\n", page_addr, perm, requestor_idx);
 	if (perm == 2)
 	{
 		if (pmd->invalid_count - 1 <= 0)
@@ -1756,7 +1781,7 @@ static void offload_process_page_content(void)
 		 */
 		offload_send_page_content(requestor_idx, page_addr, perm, p);
 	}
-
+	fprintf(stderr, "[offload_process_page_content]\treturning...");
 
 }
 

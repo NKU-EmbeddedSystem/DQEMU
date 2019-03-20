@@ -7573,7 +7573,13 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
 		
 		
 		fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
-		//return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
+		
+        if (*(uint32_t*)g2h(uaddr) != val)
+        {
+            fprintf(stderr, "[offload_server_futex]\t[*(uint32_t*)g2h(uaddr) %d == val %d, returning...]\n", *(uint32_t*)g2h(uaddr), val);
+            return 0;
+        }
+        return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
 		//*(uint32_t*)g2h(uaddr) = 0;
 		
 		if (!timeout)
@@ -7597,9 +7603,12 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
     case FUTEX_WAKE:
 		
 		
-		fprintf(stderr, "ffffffffffffffffffutex wake uaddr: %x\n", uaddr);
+		fprintf(stderr, "ffffffffffffffffutex wake uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
+		
 		//return 0;
-		//return offload_server_futex_wake(uaddr, op, val, timeout, uaddr2, val3);
+        *(uint32_t*)g2h(uaddr) = 0;
+		return offload_server_futex_wake(uaddr, op, val, timeout, uaddr2, val3);
+        
         return get_errno(safe_futex(g2h(uaddr), op, val, NULL, NULL, 0));
     case FUTEX_FD:
         return get_errno(safe_futex(g2h(uaddr), op, val, NULL, NULL, 0));
