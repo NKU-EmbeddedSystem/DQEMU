@@ -16,7 +16,7 @@ qemu_moddir=${prefix}/lib/qemu
 qemu_localstatedir=${prefix}/var
 qemu_helperdir=${prefix}/libexec
 qemu_localedir=${prefix}/share/locale
-libs_softmmu=-lpixman-1 -lutil -lpng16 -lz  -lfdt
+libs_softmmu=-lpixman-1 -lutil  -lfdt
 GIT=git
 GIT_SUBMODULES=ui/keycodemapdb dtc capstone
 GIT_UPDATE=yes
@@ -37,19 +37,11 @@ OSS_LIBS=
 CONFIG_BDRV_RW_WHITELIST=
 CONFIG_BDRV_RO_WHITELIST=
 CONFIG_VNC=y
-CONFIG_VNC_PNG=y
 CONFIG_FNMATCH=y
 VERSION=3.0.0
 PKGVERSION=
-SRC_PATH=/home/ub/DQEMU
+SRC_PATH=/home/tropping/DQEMU
 TARGET_DIRS=arm-linux-user
-CONFIG_X11=y
-X11_CFLAGS=
-X11_LIBS=-lX11
-CONFIG_SDL=m
-CONFIG_SDLABI=1.2
-SDL_CFLAGS=-D_GNU_SOURCE=1 -D_REENTRANT -I/usr/include/SDL -Wno-undef 
-SDL_LIBS=-lSDL -lX11
 CONFIG_PIPE2=y
 CONFIG_ACCEPT4=y
 CONFIG_SPLICE=y
@@ -77,10 +69,6 @@ CONFIG_SEM_TIMEDWAIT=y
 HAVE_STRCHRNUL=y
 CONFIG_BYTESWAP_H=y
 CONFIG_HAS_GLIB_SUBPROCESS_TESTS=y
-CONFIG_GTK=m
-CONFIG_GTKABI=2.0
-GTK_CFLAGS=-pthread -I/usr/include/gtk-2.0 -I/usr/lib/x86_64-linux-gnu/gtk-2.0/include -I/usr/include/gio-unix-2.0/ -I/usr/include/cairo -I/usr/include/pango-1.0 -I/usr/include/atk-1.0 -I/usr/include/cairo -I/usr/include/pixman-1 -I/usr/include/libpng16 -I/usr/include/gdk-pixbuf-2.0 -I/usr/include/libpng16 -I/usr/include/pango-1.0 -I/usr/include/harfbuzz -I/usr/include/pango-1.0 -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/freetype2 -I/usr/include/libpng16 -I/usr/include/freetype2 
-GTK_LIBS=-lgtk-x11-2.0 -lgdk-x11-2.0 -lpangocairo-1.0 -latk-1.0 -lcairo -lgdk_pixbuf-2.0 -lgio-2.0 -lpangoft2-1.0 -lpango-1.0 -lgobject-2.0 -lglib-2.0 -lfontconfig -lfreetype -lX11
 CONFIG_TLS_PRIORITY="NORMAL"
 HAVE_IFADDRS_H=y
 HAVE_FSXATTR=y
@@ -144,7 +132,7 @@ PYTHON=python -B
 CC=cc
 HOST_CC=cc
 CXX=c++
-OBJCC=clang
+OBJCC=cc
 AR=ar
 ARFLAGS=rv
 AS=as
@@ -157,9 +145,9 @@ NM=nm
 WINDRES=windres
 CFLAGS=-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -g -Wno-error
 CFLAGS_NOPIE=
-QEMU_CFLAGS=-I/usr/include/pixman-1 -I$(SRC_PATH)/dtc/libfdt -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv  -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include
-QEMU_CXXFLAGS= -D__STDC_LIMIT_MACROS -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wall -Wundef -Wwrite-strings -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wtype-limits -fstack-protector-strong -I/usr/include/libpng16 -I$(SRC_PATH)/capstone/include
-QEMU_INCLUDES=-iquote $(SRC_PATH)/tcg -iquote $(SRC_PATH)/tcg/i386 -I$(SRC_PATH)/linux-headers -I/home/ub/DQEMU/linux-headers -iquote . -iquote $(SRC_PATH) -iquote $(SRC_PATH)/accel/tcg -iquote $(SRC_PATH)/include
+QEMU_CFLAGS=-I/usr/include/pixman-1 -I$(SRC_PATH)/dtc/libfdt -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wstrict-prototypes -Wredundant-decls -Wall -Wundef -Wwrite-strings -Wmissing-prototypes -fno-strict-aliasing -fno-common -fwrapv  -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wnested-externs -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wold-style-declaration -Wold-style-definition -Wtype-limits -fstack-protector-strong -I$(SRC_PATH)/capstone/include
+QEMU_CXXFLAGS= -D__STDC_LIMIT_MACROS -pthread -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -fPIE -DPIE -m64 -mcx16 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -Wall -Wundef -Wwrite-strings -fno-strict-aliasing -fno-common -fwrapv -Wexpansion-to-defined -Wendif-labels -Wno-shift-negative-value -Wno-missing-include-dirs -Wempty-body -Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers -Wtype-limits -fstack-protector-strong -I$(SRC_PATH)/capstone/include
+QEMU_INCLUDES=-iquote $(SRC_PATH)/tcg -iquote $(SRC_PATH)/tcg/i386 -I$(SRC_PATH)/linux-headers -I/home/tropping/DQEMU/linux-headers -iquote . -iquote $(SRC_PATH) -iquote $(SRC_PATH)/accel/tcg -iquote $(SRC_PATH)/include
 AUTOCONF_HOST := 
 LDFLAGS=-Wl,--warn-common -Wl,-z,relro -Wl,-z,now -pie -m64 -g 
 LDFLAGS_NOPIE=
@@ -177,7 +165,6 @@ TASN1_LIBS=
 TASN1_CFLAGS=
 POD2MAN=pod2man --utf8
 TRANSLATE_OPT_CFLAGS=
-HAVE_USER_DOCKER=y
 config-host.h: subdir-dtc
 config-host.h: subdir-capstone
 LIBCAPSTONE=libcapstone.a

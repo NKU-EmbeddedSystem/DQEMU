@@ -1,1 +1,1 @@
-/home/ub/DQEMU/Makefile.target
+/home/tropping/DQEMU/Makefile.target

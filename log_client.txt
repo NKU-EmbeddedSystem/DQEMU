@@ -1,7 +1,1 @@
 PARSEC Benchmark Suite Version 3.0-beta-20150206
-initialize data, time=11821.718750ms
-Num of Options: 1000000
-Num of Runs: 100
-Size of data: 40000000
-initialize step 2, time=25.812000ms
-threads running, time=380913.125000ms
