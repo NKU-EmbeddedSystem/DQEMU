@@ -51,7 +51,7 @@ static void offload_server_send_page_request(target_ulong page_addr, uint32_t pe
 void offload_server_send_mutex_request(uint32_t mutex_addr);
 static void offload_process_page_request(void);
 static void offload_process_page_content(void);
-static void offload_send_page_content(target_ulong page_addr, uint32_t perm);
+static void offload_send_page_content(target_ulong page_addr, uint32_t perm,int);
 static void offload_send_page_ack(target_ulong page_addr, uint32_t perm);
 int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc);
 static void offload_process_page_perm(void);
@@ -459,9 +459,12 @@ static void offload_process_page_request(void)
 	
 	uint32_t perm = *((uint32_t *) p);
 	p += sizeof(uint32_t);
-	
-	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d\n", page_addr, perm);
-	offload_send_page_content(page_addr, perm);
+	int client_idx = *((int*) p);
+	p += sizeof(int);
+	int forwho = *((int*) p);
+	p += sizeof(int);
+	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d, from %d, for %d\n", page_addr, perm, client_idx, forwho);
+	offload_send_page_content(page_addr, perm, forwho);
 	fprintf(stderr, "[offload_process_page_request]\tsent content\n", page_addr, perm);
 	/*	if required permission is WRITE|READ,
 	*	we won't be able to use it (invalidate)
@@ -531,7 +534,7 @@ static void offload_process_page_content(void)
 }
 
 /* send |CONTENT|page|perm|content| */
-static void offload_send_page_content(target_ulong page_addr, uint32_t perm)
+static void offload_send_page_content(target_ulong page_addr, uint32_t perm, int forwho)
 {
 	/* prepare space for head */
 	char buf[TARGET_PAGE_SIZE * 2];
@@ -541,6 +544,8 @@ static void offload_send_page_content(target_ulong page_addr, uint32_t perm)
     p += sizeof(target_ulong);
 	*((uint32_t *) p) = perm;
 	p += sizeof(uint32_t);
+	*((int*) p) = forwho;
+	p += sizeof(int);
     /* followed by page content (size = TARGET_PAGE_SIZE) */
 	fprintf(stderr, "[DEBUG]\tPOINT1\n");
 	//TODO: 如果是2就直接disable了 如果是1就發送。

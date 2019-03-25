@@ -7606,6 +7606,7 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
 		fprintf(stderr, "ffffffffffffffffutex wake uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
 		
 		//return 0;
+        put_user_u32(0, uaddr);
         *(uint32_t*)g2h(uaddr) = 0;
 		return offload_server_futex_wake(uaddr, op, val, timeout, uaddr2, val3);
         
@@ -8308,7 +8309,8 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         fprintf(stderr,"[exit]\tNOW child_tidptr: %p\n", ts->child_tidptr);
         fprintf(stderr,"[exit]\tNOW child_tidptr value: %p\n", *(uint32_t*)g2h(ts->child_tidptr));
         if (ts->child_tidptr) {
-            *(uint32_t*)g2h(ts->child_tidptr) = 0;
+            
+            //*(uint32_t*)g2h(ts->child_tidptr) = 0;
             //put_user_u32(0, ts->child_tidptr);
             extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
                                                         abi_long arg2, abi_long arg3, abi_long arg4,
