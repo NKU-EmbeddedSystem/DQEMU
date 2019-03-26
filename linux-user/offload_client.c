@@ -104,7 +104,7 @@ static void offload_process_mutex_done(void);
 static void offload_send_syscall_result(int,abi_long);
 static void offload_process_syscall_request(void);
 static void offload_send_tid(int idx, uint32_t tid);
-int try_recv(int);
+static int try_recv(int);
 //int requestor_idx, target_ulong addr, int perm
 struct info
 {
@@ -1110,6 +1110,45 @@ static void offload_process_page_request(void)
 	offload_client_fetch_page(offload_client_idx, page_addr, perm);
 }
 
+static int try_recv(int size)
+{
+	int res;
+	int nleft = size;
+	char* ptr = net_buffer;
+	while (nleft > 0)
+	{
+		res = recv(skt[offload_client_idx], ptr, nleft, 0);
+		if (res == -1)//Resource temporarily unavailable
+		{
+			//fprintf(stderr, "[try_recv]\twait a sec\n");
+			//sleep(0.01);
+			continue;
+		}
+		else if (res < 0)
+		{
+			fprintf(stderr, "[try_recv]\terrno: %d\n", res);
+			perror("try_recv");
+			exit(-1);
+		}
+		else if (res == 0)
+		{
+			fprintf(stderr, "[try_recv]\tconnection closed.\n");
+			exit(0);
+		}
+		else
+		{
+			
+			nleft -= res;
+			ptr += res;
+			
+			fprintf(stderr, "[try_recv]\treceived %d B, %d left.\n", res, nleft);
+		}
+		
+	}
+	return size;
+}
+
+/*
 int try_recv(int size)
 {
 	int res;
@@ -1181,7 +1220,7 @@ int try_recv(int size)
 	}
 
 }
-
+*/
 static void offload_client_routine(void)
 {
 
@@ -1221,6 +1260,10 @@ void* offload_client_daemonize(void)
 			fprintf(stderr, "[offload_client_daemonize]\tthread_cpu: %p\n", thread_cpu);
 			last_flag_recv = 1;
 			struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
+			if (tcp_header->magic_nr!=COMM_MAGIC_NR)
+			{
+				fprintf(stderr, "[offload_client_daemonize]\ttcp_header->magic_nr == %p??\n", tcp_header->magic_nr);
+			}
 			switch (tcp_header->tag)
 			{
 				case TAG_OFFLOAD_PAGE_REQUEST:
@@ -1279,7 +1322,7 @@ void* offload_client_daemonize(void)
 					break;
 
 				default:
-					fprintf(stderr, "[offload_client_daemonize]\tunknown tag\n");
+					fprintf(stderr, "[offload_client_daemonize]\tunknown tag:%d\n", tcp_header->tag);
 					exit(0);
 					break;
 

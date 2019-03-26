@@ -864,4 +864,7 @@ util/uri.d
 util/uuid.d
 util/vfio-helpers.d
 .vscode/
+prices.txt
+log_client.txt
+log_server.txt
 

@@ -1154,7 +1154,8 @@ static void try_recv(int size)
 		res = recv(client_socket, ptr, nleft, 0);
 		if (res < 0)
 		{
-			fprintf(stderr, "[try_recv]\terrno: %d", res);
+			fprintf(stderr, "[try_recv]\terrno: %d\n", res);
+			perror("try_recv");
 			exit(-1);
 		}
 		else if (res == 0)
