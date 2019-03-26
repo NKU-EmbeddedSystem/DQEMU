@@ -23,6 +23,7 @@
 
 #include <sys/socket.h>
 #include "offload_common.h"
+static void try_recv(int);
 int sktfd;
 int client_socket;
 extern int offload_server_idx;
@@ -34,7 +35,7 @@ extern CPUArchState *env;
 uint32_t stack_end, stack_start;
 extern pthread_mutex_t cmpxchg_mutex;
 int futex_result;
-
+extern int autoSend(int,char*,int,int);
 static void offload_server_init(void);
 static void offload_server_daemonize(void);
 static void offload_process_start(void);
@@ -57,7 +58,6 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc);
 static void offload_process_page_perm(void);
 void offload_server_start(void);
 void* offload_center_server_start(void*);
-static void try_recv(int length);
 static void offload_server_process_futex_wake_result(void);
 void offload_server_send_cmpxchg_start(uint32_t);
 void offload_server_send_cmpxchg_end(uint32_t);
@@ -79,6 +79,8 @@ static int syscall_ready_flag; static pthread_mutex_t syscall_recv_mutex; static
 static int futex_uaddr_changed_flag; static pthread_mutex_t futex_mutex; static pthread_cond_t futex_cond;
 static void* exec_segfault_addr; static void* syscall_segfault_addr;
 abi_long result_global;
+
+
 /* get packet_counter of net_buffer */
 static uint32_t get_number(void)
 {
@@ -111,7 +113,7 @@ static void offload_server_init(void)
 	sockaddr.sin_port = htons(server_port_of(offload_server_idx));
 	
 
-	sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	sockaddr.sin_addr.s_addr = inet_addr("192.168.1.107");
 	pthread_mutex_init(&socket_mutex, NULL);
 	int tmp = 1;
 	setsockopt(sktfd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
@@ -392,7 +394,7 @@ void offload_server_send_mutex_request(uint32_t mutex_addr)
 	/* we should lock first in case verified returns before we lock!!!!!! */
 	pthread_mutex_lock(&mutex_recv_mutex);
 	
-	int res = send(client_socket, buf, pp - buf, 0);
+	int res = autoSend(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[cmpxchg_request]\tsent mutex request %p failed\n", mutex_addr);
@@ -437,7 +439,7 @@ static void offload_server_send_page_request(target_ulong page_addr, uint32_t pe
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_REQUEST);
 	
-	int res = send(client_socket, buf, pp - buf, 0);
+	int res = autoSend(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_server_send_page_request]\tsent page %x request failed\n", page_addr);
@@ -558,7 +560,7 @@ static void offload_send_page_content(target_ulong page_addr, uint32_t perm, int
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, p - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_CONTENT);
 	fprintf(stderr, "[DEBUG]\tPOINT3\n");
-	int res = send(client_socket, buf, p - buf, 0);
+	int res = autoSend(client_socket, buf, p - buf, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_send_page_content]\tsent page %x content failed\n", page_addr);
@@ -582,7 +584,7 @@ static void offload_send_page_ack(target_ulong page_addr, uint32_t perm)
 	/* fill head, tag = ack */
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_ACK);
-	int res = send(client_socket, net_buffer, p - net_buffer, 0);
+	int res = autoSend(client_socket, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_send_page_ack]\tsent page %x ack failed\n", page_addr);
@@ -860,7 +862,7 @@ static void offload_send_mutex_done(uint32_t mutex_addr)
 	/* fill head, tag = MUTEX_DONE */
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, p - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_DONE);
-	int res = send(client_socket, buf, p - buf, 0);
+	int res = autoSend(client_socket, buf, p - buf, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_send_mutex_done]\tsent mutex %p done failed\n", mutex_addr);
@@ -876,6 +878,7 @@ void offload_server_send_cmpxchg_end(uint32_t page_addr)
 	page_addr &= ~0xfff;
 }
 
+/*
 //try to receive exactly length bytes
 static void try_recv(int length)
 {
@@ -901,6 +904,7 @@ static void try_recv(int length)
 	}
 	exit(0);
 }
+*/
 static void offload_server_send_futex_wake_request(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3)
 {
 	p = BUFFER_PAYLOAD_P;
@@ -925,7 +929,7 @@ static void offload_server_send_futex_wake_request(target_ulong uaddr, int op, i
 	
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FUTEX_WAKE_REQUEST);
-	int res = send(client_socket, net_buffer, p - net_buffer, 0);
+	int res = autoSend(client_socket, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_server_send_futex_wake_request]\tsent futex wake request failed\n");
@@ -957,7 +961,7 @@ static void offload_server_send_futex_wait_request(target_ulong guest_addr, int 
 	
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FUTEX_WAIT_REQUEST);
-	int res = send(client_socket, net_buffer, p - net_buffer, 0);
+	int res = autoSend(client_socket, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_server_send_futex_wait]\tsent futex wait request failed\n");
@@ -1081,7 +1085,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_REQ);
 
-	int res = send(client_socket, buf, pp - buf, 0);
+	int res = autoSend(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[pass_syscall]\tpassing syscall failed\n");
@@ -1137,4 +1141,36 @@ static void offload_process_tid(void)
 	ts = cpu->opaque;
 	ts->child_tidptr = tid;
 	fprintf(stderr,"[offload_process_tid]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+}
+
+
+static void try_recv(int size)
+{
+	int res;
+	int nleft = size;
+	char* ptr = net_buffer;
+	while (nleft > 0)
+	{
+		res = recv(client_socket, ptr, nleft, 0);
+		if (res < 0)
+		{
+			fprintf(stderr, "[try_recv]\terrno: %d", res);
+			exit(-1);
+		}
+		else if (res == 0)
+		{
+			fprintf(stderr, "[try_recv]\tconnection closed.\n");
+			exit(0);
+		}
+		else
+		{
+			
+			nleft -= res;
+			ptr += res;
+			if (nleft)
+				fprintf(stderr, "[try_recv]\treceived %d B, %d left.\n", res, nleft);
+		}
+		
+	}
+	return size;
 }

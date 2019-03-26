@@ -863,3 +863,5 @@ util/unicode.d
 util/uri.d
 util/uuid.d
 util/vfio-helpers.d
+.vscode/
+
