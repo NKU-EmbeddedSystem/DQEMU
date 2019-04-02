@@ -113,7 +113,7 @@ static void offload_server_init(void)
 	sockaddr.sin_port = htons(server_port_of(offload_server_idx));
 	
 
-	sockaddr.sin_addr.s_addr = inet_addr("192.168.1.107");
+	sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 	pthread_mutex_init(&socket_mutex, NULL);
 	int tmp = 1;
 	setsockopt(sktfd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
@@ -1016,6 +1016,7 @@ int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong 
 	//futex_result = 0;
 	//page_recv_flag = 0;
 	//offload_server_send_futex_wake_request(uaddr, op, val, timeout, uaddr2, val3);
+	 
 	fprintf(stderr, "[offload_server_futex_wake]\t[*(uint32_t*)g2h(uaddr) %d == val %d, sleeping...]\n", *(uint32_t*)g2h(uaddr), val);
 	pthread_mutex_lock(&futex_mutex);
 	futex_uaddr_changed_flag = 1;
@@ -1047,6 +1048,15 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
                     abi_long arg5, abi_long arg6, abi_long arg7,
                     abi_long arg8)
 {
+	// if ((num == TARGET_NR_futex)&&
+	// 	(arg2 == FUTEX_PRIVATE_FLAG|FUTEX_WAIT) && 
+	// 	(offload_server_idx > 0))// futex wait from server, ignore
+	// {
+	// 	fprintf(stderr, "[arm-cpu]\tI am #%d ignoring..futex\n", offload_server_idx);
+	// 	return 0;
+	// 	exit(-1);
+	// }
+	// fprintf(stderr, "[pass_syscall]\targ2 = %d\n",arg2);
 	fprintf(stderr, "[pass_syscall]\tpassing syscall to center\n");
 	extern void print_syscall(int num,
               abi_long arg1, abi_long arg2, abi_long arg3,

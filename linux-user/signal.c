@@ -652,10 +652,10 @@ static void host_signal_handler(int host_signum, siginfo_t *info,
 	
 	
 	
-	fprintf(stderr, "[thread_cpu]: %p\n", thread_cpu);
+	//fprintf(stderr, "[thread_cpu]: %p\n", thread_cpu);
     CPUArchState *env = thread_cpu->env_ptr;
     CPUState *cpu = ENV_GET_CPU(env);
-	fprintf(stderr, "[cpu]: %p\n", cpu);
+	//fprintf(stderr, "[cpu]: %p\n", cpu);
     TaskState *ts = cpu->opaque;
 	//TaskState *ts = thread_cpu->opaque; /* what is the difference??? */
     int sig;

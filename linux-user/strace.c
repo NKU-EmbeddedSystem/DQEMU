@@ -12,7 +12,7 @@
 #include "qemu.h"
 
 /* do_strace should be 0, this(=1) is for debug purpose */
-int do_strace=1;
+int do_strace=0;
 
 struct syscallname {
     int nr;

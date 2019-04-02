@@ -29,10 +29,10 @@ __thread int offload_client_idx;
 #define PRTCTRL_YELLO "\e[0;33m"
 #define PRTCTRL_BLUE "\e[0;34m"
 #define PRTCTRL_CYN "\e[0;36m"
-#define DEBUG 1
+#define DEBUG 0
 void offload_log(FILE *f, const char *c, ...)
 {
-	if (!DEBUG)
+	if (0)
 		return;
 	char tmp[1000] = "";
 

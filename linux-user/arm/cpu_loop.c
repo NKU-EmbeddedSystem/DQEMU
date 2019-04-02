@@ -361,7 +361,7 @@ void cpu_loop(CPUARMState *env)
                         extern int offload_server_idx;
                         if (n == TARGET_NR_futex)
                         {
-                            fprintf(stderr, "[arm-cpu]\tignoring futex\n");
+                            //fprintf(stderr, "[arm-cpu]\tignoring futex\n");
                         }
                         if ((n == TARGET_NR_write
                             || n == TARGET_NR_read
@@ -376,21 +376,32 @@ void cpu_loop(CPUARMState *env)
                             || n == TARGET_NR_futex
                             ) && offload_server_idx>0)
                         {
-                            fprintf(stderr, "[arm-cpu]\tpassing write to center...\n");
-                            extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
-                                                        abi_long arg2, abi_long arg3, abi_long arg4,
-                                                        abi_long arg5, abi_long arg6, abi_long arg7,
-                                                        abi_long arg8);
-                            ret = pass_syscall(env,
-                                            n,
-                                            env->regs[0],
-                                            env->regs[1],
-                                            env->regs[2],
-                                            env->regs[3],
-                                            env->regs[4],
-                                            env->regs[5],
-                                            0, 0);
-                            fprintf(stderr, "[arm-cpu]\tgot ret = %p\n", ret);
+                            if (0&&(n == TARGET_NR_futex)&&
+                                (env->regs[1]&FUTEX_WAIT == FUTEX_WAIT) && 
+                                (offload_server_idx > 0))// futex wait from server, ignore
+                            {
+                                fprintf(stderr, "[arm-cpu]\tI am #%d ignoring..futex\n", offload_server_idx);
+                                ret = 0;
+                                exit(-1);
+                            }
+                            else
+                            {              
+                                fprintf(stderr, "[arm-cpu]\tI am #%d, passing syscall to center...\n", offload_server_idx);
+                                extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
+                                                            abi_long arg2, abi_long arg3, abi_long arg4,
+                                                            abi_long arg5, abi_long arg6, abi_long arg7,
+                                                            abi_long arg8);
+                                ret = pass_syscall(env,
+                                                n,
+                                                env->regs[0],
+                                                env->regs[1],
+                                                env->regs[2],
+                                                env->regs[3],
+                                                env->regs[4],
+                                                env->regs[5],
+                                                0, 0);
+                                fprintf(stderr, "[arm-cpu]\tgot ret = %p\n", ret);
+                            }
                         }
                         else
                         {

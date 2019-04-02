@@ -7606,8 +7606,13 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
 		fprintf(stderr, "ffffffffffffffffutex wake uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
 		
 		//return 0;
-        put_user_u32(0, uaddr);
-        *(uint32_t*)g2h(uaddr) = 0;
+
+        if (val3 == 1) // pthread_join, put childptr to 0.
+        {
+            fprintf(stderr, "[futex_wait]\t[detected pthread_join]\n");
+            put_user_u32(0, uaddr);
+            *(uint32_t*)g2h(uaddr) = 0;
+        }
 		return offload_server_futex_wake(uaddr, op, val, timeout, uaddr2, val3);
         
         return get_errno(safe_futex(g2h(uaddr), op, val, NULL, NULL, 0));
@@ -8225,13 +8230,13 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                     abi_long arg5, abi_long arg6, abi_long arg7,
                     abi_long arg8)
 {
-    fprintf(stderr, "[DEBUGsyscall]\tpoint0\n");
+    //fprintf(stderr, "[DEBUGsyscall]\tpoint0\n");
     CPUState *cpu = ENV_GET_CPU(cpu_env);
     abi_long ret;
     struct stat st;
     struct statfs stfs;
     void *p;
-    fprintf(stderr, "[DEBUGsyscall]\tpoint1\n");
+    //fprintf(stderr, "[DEBUGsyscall]\tpoint1\n");
 #if defined(DEBUG_ERESTARTSYS)
     /* Debug-only code for exercising the syscall-restart code paths
      * in the per-architecture cpu main loops: restart every syscall
@@ -8251,10 +8256,10 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
     gemu_log("DEBUGGING syscall %d\n\n", num);
 #endif
     trace_guest_user_syscall(cpu, num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
-    fprintf(stderr, "[DEBUGsyscall]\tpoint1.5\n");
+    //fprintf(stderr, "[DEBUGsyscall]\tpoint1.5\n");
     if(do_strace)
         print_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6);
-	fprintf(stderr, "[DEBUGsyscall]\tpoint2\n");
+	//fprintf(stderr, "[DEBUGsyscall]\tpoint2\n");
 	
 	
     switch(num) {
@@ -8288,7 +8293,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
             thread_cpu = NULL;
             object_unref(OBJECT(cpu));
             g_free(ts);
-            fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
+            //fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
             rcu_unregister_thread();
             pthread_exit(NULL);
         }
@@ -8296,7 +8301,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         cpu_list_unlock();
         preexit_cleanup(cpu_env, arg1);
         // thread ends, avoid terminating 
-        fprintf(stderr,"DDDDDDDDDDDDDDDDDOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNTTTTTTTTTTTTT\n");
+        //fprintf(stderr,"DDDDDDDDDDDDDDDDDOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNTTTTTTTTTTTTT\n");
         //will result in process termination, never do that
         //_exit(arg1);
 
@@ -8306,7 +8311,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 
         cpu_list_unlock();
         ts = cpu->opaque;
-        fprintf(stderr,"[exit]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+        //fprintf(stderr,"[exit]\tNOW child_tidptr: %p\n", ts->child_tidptr);
         fprintf(stderr,"[exit]\tNOW child_tidptr value: %p\n", *(uint32_t*)g2h(ts->child_tidptr));
         if (ts->child_tidptr) {
             
@@ -8317,7 +8322,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                                                         abi_long arg5, abi_long arg6, abi_long arg7,
                                                         abi_long arg8);
             pass_syscall(cpu_env,TARGET_NR_futex,ts->child_tidptr, FUTEX_WAKE, INT_MAX,
-                        NULL, NULL, 0, 0, 0);
+                        1, 1, 1, 0, 0);
         }
         thread_cpu = NULL;
         fprintf(stderr,"[exit]\tcpu_list_unlocking\n");
@@ -8326,14 +8331,14 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         object_unref(OBJECT(cpu));
         fprintf(stderr,"[exit]\tg_free\n");
         g_free(ts);
-        fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
+        //fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
         //rcu_unregister_thread();
         //pthread_exit(NULL);
 
 
         extern void cpu_exit_signal(void);
         cpu_exit_signal();
-        fprintf(stderr,"CAN U SEE ME?\n");
+        //fprintf(stderr,"CAN U SEE ME?\n");
         while (1) ;
         return NULL;
         ret = 0; /* avoid warning */
@@ -8353,7 +8358,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         }
         break;
     case TARGET_NR_write:
-        fprintf(stderr,"I am fvking writing!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+        //fprintf(stderr,"I am fvking writing!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
         if (!(p = lock_user(VERIFY_READ, arg2, arg3, 1)))
             goto efault;
         if (fd_trans_target_to_host_data(arg1)) {
@@ -8371,16 +8376,16 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         break;
 #ifdef TARGET_NR_open
     case TARGET_NR_open:
-        fprintf(stderr, "[DEBUG]\tpoint0\n");
+        //fprintf(stderr, "[DEBUG]\tpoint0\n");
         if (!(p = lock_user_string(arg1)))
             goto efault;
-        fprintf(stderr, "[DEBUG]\tpoint1\n");
+        //fprintf(stderr, "[DEBUG]\tpoint1\n");
         ret = get_errno(do_openat(cpu_env, AT_FDCWD, p,
                                   target_to_host_bitmask(arg2, fcntl_flags_tbl),
                                   arg3));
-        fprintf(stderr, "[DEBUG]\tpoint2\n");
+        //fprintf(stderr, "[DEBUG]\tpoint2\n");
         fd_trans_unregister(ret);
-        fprintf(stderr, "[DEBUG]\tpoint3\n");
+        //fprintf(stderr, "[DEBUG]\tpoint3\n");
         unlock_user(p, arg1, 0);
         break;
 #endif
@@ -11396,14 +11401,14 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 #endif
 #ifdef TARGET_NR_fstat64
     case TARGET_NR_fstat64:
-        fprintf(stderr, "[DEBUG]\tpoint0\n");
+        //fprintf(stderr, "[DEBUG]\tpoint0\n");
         ret = get_errno(fstat(arg1, &st));
-        fprintf(stderr, "[DEBUG]\tpoint1\n");
+        //fprintf(stderr, "[DEBUG]\tpoint1\n");
         if (!is_error(ret))
         {
 
-            fprintf(stderr, "[DEBUG]\tpoint2\n");
-            fprintf(stderr, "[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+            //fprintf(stderr, "[DEBUG]\tpoint2\n");
+            //fprintf(stderr, "[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
             ret = host_to_target_stat64(cpu_env, arg2, &st);
         }
         break;

@@ -358,14 +358,49 @@ static void offload_client_init(void)
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_port = htons(server_port_of(offload_client_idx));
 	char* ip_addr;
-	if (offload_client_idx<=7)
+	switch (offload_client_idx)
+	{
+		case 0:
+			ip_addr = "10.134.101.9";
+			break;
+		case 1:
+		case 2:
+		case 3:
+		case 4:
+			ip_addr = "10.134.83.158";
+			break;
+		case 5:
+		case 6:
+		case 7:
+		case 8:
+			ip_addr = "10.134.83.158";
+			break;
+		default:
+			ip_addr = "10.134.101.9";
+			break;
+	}
+	if (offload_client_idx == 0)
+	{
+		ip_addr = "192.168.1.107";
+	}
+	else if (offload_client_idx<=3)
+	{
+		ip_addr = "10.134.83.158";
+	}
+	else if (offload_client_idx<=6)
+	{
+		ip_addr = "192.168.1.100";
+	}
+	else if (offload_client_idx<=16)
 	{
 		ip_addr = "192.168.1.107";
 	}
 	else if (offload_client_idx<=7+2)
 	{
-		ip_addr = "192.168.1.101";
+		
 	}
+		ip_addr = "127.0.0.1";
+
 	//检索服务器的ip地址
 	unsigned long dst_ip;
 	if((dst_ip=inet_addr(ip_addr))){
