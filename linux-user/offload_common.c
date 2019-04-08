@@ -1,5 +1,5 @@
 #include "offload_common.h"
-
+#include <sys/timeb.h>
 #define MUTEX_LIST_MAX 10
 
 __thread char *p;
@@ -34,27 +34,32 @@ void offload_log(FILE *f, const char *c, ...)
 {
 	if (0)
 		return;
-	char tmp[1000] = "";
 
+	struct timeb t;
+    ftime(&t);
+	char tmp[1000] = "";
+	int timeSec = t.time % 60;
+	t.time /= 60;
+	int timeMin = t.time % 60;
 	if (offload_mode == 1)
 	{
-		sprintf(tmp, PRTCTRL_RED "[server #%d]\t", offload_server_idx);
+		sprintf(tmp, PRTCTRL_RED "[server #%d]%d:%d:%d\t", offload_server_idx, timeMin, timeSec, t.millitm);
 	}
 	else if (offload_mode == 2)
 	{
-		sprintf(tmp, PRTCTRL_GREEN "[client #%d]\t", offload_client_idx);
+		sprintf(tmp, PRTCTRL_GREEN "[client #%d]%d:%d:%d\t", offload_client_idx, timeMin, timeSec, t.millitm);
 	}
 	else if (offload_mode == 3)
 	{
-		sprintf(tmp, PRTCTRL_YELLO "[exec #%d]\t", offload_server_idx);
+		sprintf(tmp, PRTCTRL_YELLO "[exec #%d]%d:%d:%d\t", offload_server_idx, timeMin, timeSec, t.millitm);
 	}
 	else if (offload_mode == 4)
 	{
-		sprintf(tmp, PRTCTRL_BLUE "[syscall #%d]\t", offload_client_idx);
+		sprintf(tmp, PRTCTRL_BLUE "[syscall #%d]%d:%d:%d\t", offload_client_idx, timeMin, timeSec, t.millitm);
 	}
 	else if (offload_mode == 5)
 	{
-		sprintf(tmp, PRTCTRL_CYN "[client thread #%d]\t", offload_client_idx);
+		sprintf(tmp, PRTCTRL_CYN "[client thread #%d]%d:%d:%d\t", offload_client_idx, timeMin, timeSec, t.millitm);
 	}
 	strcat(tmp, c);
 	strcat(tmp, PRTCTRL_NONE);

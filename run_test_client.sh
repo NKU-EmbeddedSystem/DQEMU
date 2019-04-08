@@ -1,6 +1,6 @@
 #!/bin/sh
 
-for i in `seq 1 16`;do
+for i in `seq 2 16`;do
 	echo "number $i time !!"
-	time sh run_client.sh $i 2.5M >> log_cc.txt
+	time sh run_client.sh $i 10M
 done

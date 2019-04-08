@@ -466,6 +466,8 @@ static void offload_process_page_request(void)
 	int forwho = *((int*) p);
 	p += sizeof(int);
 	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d, from %d, for %d\n", page_addr, perm, client_idx, forwho);
+	// when debug, erase this.
+	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
 	offload_send_page_content(page_addr, perm, forwho);
 	fprintf(stderr, "[offload_process_page_request]\tsent content\n", page_addr, perm);
 	/*	if required permission is WRITE|READ,
@@ -691,13 +693,26 @@ static void offload_process_page_upgrade(void)
 	
 	target_ulong page_addr = *((target_ulong *) p);
     p += sizeof(target_ulong);
-	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
+	int perm = *((int*) p);
+	p += sizeof(int);
+	if (perm ==2)
+		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
+	else if(perm == 1)
+		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);
+	else if(perm == 0)
+		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_NONE);
+	
 	pthread_mutex_lock(&page_recv_mutex);
 	page_recv_flag = 1;
 	pthread_cond_signal(&page_recv_cond);
 	pthread_mutex_unlock(&page_recv_mutex);
 
-	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x upgrade\n", page_addr);
+	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x upgrade to %d\n", page_addr, perm);
+	if (perm > 0)
+	{
+
+		offload_send_page_ack(page_addr, perm);
+	}
 	//pthread_mutex_unlock(&socket_mutex);
 }
 

@@ -374,6 +374,7 @@ void cpu_loop(CPUARMState *env)
                             || n == TARGET_NR_fstat64
                             || n == TARGET_NR_gettimeofday
                             || n == TARGET_NR_futex
+                            //|| (n == TARGET_NR_futex && env->regs[1] != 128)
                             ) && offload_server_idx>0)
                         {
                             if (0&&(n == TARGET_NR_futex)&&

@@ -177,7 +177,6 @@ static int dump_self_maps(void);
 static void dump_brk(void);
 static void dump_code(void);
 static void offload_send_start(void);
-static void offload_send_page_upgrade(target_ulong page_addr);
 
 static void offload_process_page_request(void);
 static void offload_client_daemonize(void);
@@ -527,28 +526,6 @@ static void offload_send_start(void)
 
 //pthread_mutex_t page_request_map1_mutex, page_result_map2_mutex;
 pthread_mutex_t page_request_map_mutex;
-
-static void offload_send_page_upgrade(target_ulong page_addr)
-{
-	//pthread_mutex_lock(&socket_mutex);
-    p = BUFFER_PAYLOAD_P;
-	
-	*((target_ulong *) p) = page_addr;
-	p += sizeof(target_ulong);
-	
-	
-	
-	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
-    fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_UPGRADE);
-	
-	int res;
-	if (res = send(skt[offload_client_idx], net_buffer, p - net_buffer, 0) < 0)
-	{
-		fprintf(stderr, "page upgrade sending failed\n");
-	}
-	//pthread_mutex_unlock(&socket_mutex);
-}
-
 
 static void offload_process_page_request()
 {

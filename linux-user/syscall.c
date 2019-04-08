@@ -7579,13 +7579,18 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
             fprintf(stderr, "[offload_server_futex]\t[*(uint32_t*)g2h(uaddr) %d == val %d, returning...]\n", *(uint32_t*)g2h(uaddr), val);
             return 0;
         }
-        return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
+        fprintf(stderr, "[DEBUG]\tpoint1\n");
+        extern __thread int offload_mode;
+        extern int offload_server_idx;
+        if ((offload_mode == 3) && (offload_server_idx == 0))//syscall_doer
+            return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
 		//*(uint32_t*)g2h(uaddr) = 0;
 		
-		if (!timeout)
-        {
-            timeout = 3;
-        }
+		// if (!timeout)
+        // {
+        //     timeout = 3;
+        // }
+        fprintf(stderr, "[DEBUG]\tpoint2\n");
         if (timeout) {
             pts = &ts;
             target_to_host_timespec(pts, timeout);
@@ -7593,6 +7598,7 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
             
             pts = NULL;
         }
+        fprintf(stderr, "[DEBUG]\tpoint3\n");
         fprintf(stderr, "[futex_wait]\t[timeout:]%d,%d\n", pts->tv_sec, pts->tv_nsec);
         return get_errno(safe_futex(g2h(uaddr), op, tswap32(val),
                          pts, NULL, val3));

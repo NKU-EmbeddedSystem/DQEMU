@@ -287,7 +287,7 @@ static int dump_self_maps(void);
 static void dump_brk(void);
 static void dump_code(void);
 static void offload_send_start(void);
-static void offload_send_page_upgrade(int idx, target_ulong page_addr);
+static void offload_send_page_upgrade(int idx, target_ulong page_addr, int);
 
 static void offload_process_page_request(void);
 void* offload_client_daemonize(void);
@@ -373,33 +373,40 @@ static void offload_client_init(void)
 		case 6:
 		case 7:
 		case 8:
-			ip_addr = "10.134.83.158";
+			ip_addr = "10.134.76.146";
+			break;
+		case 9:
+		case 10:
+		case 11:
+		case 12:
+			ip_addr = "10.134.43.199";
 			break;
 		default:
 			ip_addr = "10.134.101.9";
 			break;
 	}
-	if (offload_client_idx == 0)
-	{
-		ip_addr = "192.168.1.107";
-	}
-	else if (offload_client_idx<=3)
-	{
-		ip_addr = "10.134.83.158";
-	}
-	else if (offload_client_idx<=6)
-	{
-		ip_addr = "192.168.1.100";
-	}
-	else if (offload_client_idx<=16)
-	{
-		ip_addr = "192.168.1.107";
-	}
-	else if (offload_client_idx<=7+2)
-	{
+	ip_addr = "127.0.0.1";
+	// if (offload_client_idx == 0)
+	// {
+	// 	ip_addr = "192.168.1.107";
+	// }
+	// else if (offload_client_idx<=3)
+	// {
+	// 	ip_addr = "10.134.83.158";
+	// }
+	// else if (offload_client_idx<=6)
+	// {
+	// 	ip_addr = "192.168.1.100";
+	// }
+	// else if (offload_client_idx<=16)
+	// {
+	// 	ip_addr = "192.168.1.107";
+	// }
+	// else if (offload_client_idx<=7+2)
+	// {
 		
-	}
-		ip_addr = "127.0.0.1";
+	// }
+	// 	ip_addr = "127.0.0.1";
 
 	//检索服务器的ip地址
 	unsigned long dst_ip;
@@ -752,15 +759,17 @@ int autoSend(int Fd,char* buf, int length, int flag)
 pthread_mutex_t page_request_map_mutex;
 
 /* upgrade page permission */
-static void offload_send_page_upgrade(int idx, target_ulong page_addr)
+static void offload_send_page_upgrade(int idx, target_ulong page_addr, int perm)
 {
 	//pthread_mutex_lock(&socket_mutex);
 	p = BUFFER_PAYLOAD_P;
 	*((target_ulong *) p) = page_addr;
 	p += sizeof(target_ulong);
+	*((int*) p) = perm;
+	p += sizeof(int);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_UPGRADE);
-	fprintf(stderr, "[offload_send_page_upgrade]\tsending upgrade in page %p to #%d\n", page_addr, idx);
+	fprintf(stderr, "[offload_send_page_upgrade]\tsending upgrade to perm: %d in page %p to #%d\n", perm, page_addr, idx);
 	int res;
 	if (res = autoSend(skt[idx], net_buffer, p - net_buffer, 0) < 0)
 	{
@@ -768,6 +777,7 @@ static void offload_send_page_upgrade(int idx, target_ulong page_addr)
 	}
 	//pthread_mutex_unlock(&socket_mutex);
 }
+
 
 void print_holder(uint32_t page_addr)
 {
@@ -824,20 +834,26 @@ void* offload_client_fetch_page_thread(void* param)
 	if (perm == 2)
 	{
 			pmd->invalid_count = 0;
-			/* read->write, only one */
+
+			/* only one */
 			if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
 			{
 				fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
-				offload_send_page_upgrade(requestor_idx, page_addr);
+				offload_send_page_upgrade(requestor_idx, page_addr, 2);
 				print_holder(page_addr);
-				fprintf(stderr, "[offload_client_fetch_page_thread]\tunlocking...%p\n", &pmd->owner_set_mutex);
-				pthread_mutex_unlock(&pmd->owner_set_mutex);
+				//fprintf(stderr, "[offload_client_fetch_page_thread]\tunlocking...%p\n", &pmd->owner_set_mutex);
+				//pthread_mutex_unlock(&pmd->owner_set_mutex);
 			}
 			else
 			/* invalid_count = the number of sharing copies to invalidate */
 			for (int i = 0; i < pmd->owner_set.size; i++)
 			{
-				
+				if (i == 0)
+				{
+					pmd->invalid_count = 1;//wait for the page content of element[0]
+					offload_send_page_request(pmd->owner_set.element[0], page_addr, 2, requestor_idx);
+					continue;
+				}
 				int idx = pmd->owner_set.element[i];
 				/* if read->write, donnot ask itself to send the page!!!!! */
 				//TODO: read->write, when done simply donnot send page content
@@ -848,27 +864,28 @@ void* offload_client_fetch_page_thread(void* param)
 					continue;
 				}
 				
-				pmd->invalid_count++;
-				/* invalidate pages on other threads, retrieve the permission */
-				
-			}
-			for (int i = 0; i < pmd->owner_set.size; i++)
-			{
-				
-				int idx = pmd->owner_set.element[i];
-				/* if read->write, donnot ask itself to send the page!!!!! */
-				//TODO: read->write, when done simply donnot send page content
-				//again.
-				
-				if (idx == requestor_idx) 
-				{
-					continue;
-				}
 				
 				/* invalidate pages on other threads, retrieve the permission */
-				offload_send_page_request(idx, page_addr, 2, requestor_idx);
-				
+				offload_send_page_upgrade(idx, page_addr, 0);
 			}
+
+			
+			// ask 0 to send the page
+			// offload_send_page_request(pmd->owner_set.element[0], page_addr, 2, requestor_idx);
+			// // invalidate others' page
+			// for (int i = 1; i < pmd->owner_set.size; i++)
+			// {
+				
+			// 	int idx = pmd->owner_set.element[i];
+			// 	if (idx == requestor_idx) 
+			// 	{
+			// 		continue;
+			// 	}
+				
+			// 	/* invalidate pages on other threads, retrieve the permission */
+			// 	//offload_send_page_request(idx, page_addr, 2, requestor_idx);
+			// 	offload_send_page_upgrade(idx, page_addr, 0);
+			// }
 			
 			
 	}
@@ -912,7 +929,7 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 	//pthread_mutex_lock(&pmd->owner_set_mutex);
 	int res = 1;//pthread_mutex_trylock(&pmd->owner_set_mutex);
 
-	if ((res != 0 )||1)
+	if ((res != 0 )||1)//we throw a thread.
 	{
 		/* trylock failed, someone is asking for the page */
 		
@@ -946,64 +963,66 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 	}
 	else
 	{
-		/* trylock succeed, fetching page */
-		pmd->mutex_holder = requestor_idx;
-		pmd->mutex_count++;
-		offload_log(stderr, "[offload_client_fetch_page]\tlock succeed, count: %d, holder: %d\n", pmd->mutex_count, pmd->mutex_holder);
+		fprintf(stderr, "[offload_client_fetch_page]\twhat happened?\n");
+		exit(0);
+		// /* trylock succeed, fetching page */
+		// pmd->mutex_holder = requestor_idx;
+		// pmd->mutex_count++;
+		// offload_log(stderr, "[offload_client_fetch_page]\tlock succeed, count: %d, holder: %d\n", pmd->mutex_count, pmd->mutex_holder);
 
-		pmd->requestor = requestor_idx;
-		if (perm == 2)
-		{
-			pmd->invalid_count = 0;
-			/* read->write, only one */
-			if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
-			{
-				fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
-				offload_send_page_upgrade(requestor_idx, page_addr);
-				fprintf(stderr, "[offload_client_fetch_page]\tunlocking...%p\n", &pmd->owner_set_mutex);
-				pthread_mutex_unlock(&pmd->owner_set_mutex);
-			}
-			else
-			/* invalid_count = the number of sharing copies to invalidate */
-			for (int i = 0; i < pmd->owner_set.size; i++)
-			{
+		// pmd->requestor = requestor_idx;
+		// if (perm == 2)
+		// {
+		// 	pmd->invalid_count = 0;
+		// 	/* read->write, only one */
+		// 	if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
+		// 	{
+		// 		fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
+		// 		offload_send_page_upgrade(requestor_idx, page_addr, 2);
+		// 		fprintf(stderr, "[offload_client_fetch_page]\tunlocking...%p\n", &pmd->owner_set_mutex);
+		// 		pthread_mutex_unlock(&pmd->owner_set_mutex);
+		// 	}
+		// 	else
+		// 	/* invalid_count = the number of sharing copies to invalidate */
+		// 	for (int i = 0; i < pmd->owner_set.size; i++)
+		// 	{
 				
-				int idx = pmd->owner_set.element[i];
-				/* if read->write, donnot ask itself to send the page!!!!! */
-				//TODO: read->write, when done simply donnot send page content
-				//again.
+		// 		int idx = pmd->owner_set.element[i];
+		// 		/* if read->write, donnot ask itself to send the page!!!!! */
+		// 		//TODO: read->write, when done simply donnot send page content
+		// 		//again.
 				
-				if (idx == requestor_idx) 
-				{
-					continue;
-				}
+		// 		if (idx == requestor_idx) 
+		// 		{
+		// 			continue;
+		// 		}
 				
-				pmd->invalid_count++;
-				/* invalidate pages on other threads, retrieve the permission */
-				offload_send_page_request(idx, page_addr, 2, requestor_idx);
-			}
+		// 		pmd->invalid_count++;
+		// 		/* invalidate pages on other threads, retrieve the permission */
+		// 		offload_send_page_request(idx, page_addr, 2, requestor_idx);
+		// 	}
 			
-		}
-		else if (perm == 1)
-		{
-			if (pmd->owner_set.size == 0)
-			{
-				offload_log(stderr, "[offload_client_fetch_page]\terror: no one has the page\n");
-				exit(-1);
-			}	
-			/* revoke page as shared page */
-			//for (int i=0;i<pmd->owner_set.size;i++)
-			//{
-			//	fprintf(stderr,"\tnode #%d", pmd->owner_set.element[i]);
-			//}
-			print_holder(addr);
-			fprintf(stderr,"\n");
-			offload_send_page_request(pmd->owner_set.element[0], page_addr, 1, requestor_idx);
-		}
-		fprintf(stderr, "[offload_client_fetch_page]\t sent\n");
-		last_flag_lock = 1;
+		// }
+		// else if (perm == 1)
+		// {
+		// 	if (pmd->owner_set.size == 0)
+		// 	{
+		// 		offload_log(stderr, "[offload_client_fetch_page]\terror: no one has the page\n");
+		// 		exit(-1);
+		// 	}	
+		// 	/* revoke page as shared page */
+		// 	//for (int i=0;i<pmd->owner_set.size;i++)
+		// 	//{
+		// 	//	fprintf(stderr,"\tnode #%d", pmd->owner_set.element[i]);
+		// 	//}
+		// 	print_holder(addr);
+		// 	fprintf(stderr,"\n");
+		// 	offload_send_page_request(pmd->owner_set.element[0], page_addr, 1, requestor_idx);
+		// }
+		// fprintf(stderr, "[offload_client_fetch_page]\t sent\n");
+		// last_flag_lock = 1;
 
-		return 0;
+		// return 0;
 	}
 
 }
@@ -2262,7 +2281,22 @@ static void offload_process_syscall_request(void)
 	
 	fprintf(stderr, "[offload_process_syscall_request]\treceived passed syscall to center from %d, arg1: %p, arg2:%p, arg3:%p,CREATING THREAD\n", idx, arg1, arg2, arg3);
 	
+
 	pthread_t syscall_thread;
+	if ((num == TARGET_NR_futex)
+		&& (arg2 == FUTEX_PRIVATE_FLAG|FUTEX_WAIT))
+	{
+		fprintf(stderr, "[offload_process_syscall_request]\treceived futex_wait, ignore...\n");
+		//exit(-2);
+		return;
+	}
+	// if ((num == TARGET_NR_futex)
+	// 	&& (arg2 == FUTEX_PRIVATE_FLAG|FUTEX_WAKE))
+	// {
+	// 	fprintf(stderr, "[offload_process_syscall_request]\treceived futex_WAKE!!!, ignore...\n");
+	// 	exit(1);
+	// 	return;
+	// }
 	pthread_create(&syscall_thread,NULL,process_syscall_thread,(void*)syscall_p);
 	/*
 	fprintf(stderr, "[process_syscall_thread]\tprocessing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
