@@ -7573,7 +7573,7 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
 		
 		
 		fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
-		
+		//TODO uint32_t should be int
         if (*(uint32_t*)g2h(uaddr) != val)
         {
             fprintf(stderr, "[offload_server_futex]\t[*(uint32_t*)g2h(uaddr) %d == val %d, returning...]\n", *(uint32_t*)g2h(uaddr), val);
@@ -7582,7 +7582,7 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
         fprintf(stderr, "[DEBUG]\tpoint1\n");
         extern __thread int offload_mode;
         extern int offload_server_idx;
-        if ((offload_mode == 3) && (offload_server_idx == 0))//syscall_doer
+        if ((offload_mode == 3) && (offload_server_idx == 0))//exec on center
             return offload_server_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
 		//*(uint32_t*)g2h(uaddr) = 0;
 		
@@ -8328,7 +8328,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                                                         abi_long arg5, abi_long arg6, abi_long arg7,
                                                         abi_long arg8);
             pass_syscall(cpu_env,TARGET_NR_futex,ts->child_tidptr, FUTEX_WAKE, INT_MAX,
-                        1, 1, 1, 0, 0);
+                        1, 1, 1, 0, 1);
         }
         thread_cpu = NULL;
         fprintf(stderr,"[exit]\tcpu_list_unlocking\n");
@@ -12448,7 +12448,27 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 	break;
 #endif
     case TARGET_NR_futex:
-        ret = do_futex(arg1, arg2, arg3, arg4, arg5, arg6);
+    {
+        extern int syscall_started_flag;
+        extern __thread int offload_mode;
+        extern int offload_server_idx;
+        if ((offload_mode == 3) && (offload_server_idx == 0) && (syscall_started_flag == 1))
+        {
+            //TODO
+            extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
+                                                        abi_long arg2, abi_long arg3, abi_long arg4,
+                                                        abi_long arg5, abi_long arg6, abi_long arg7,
+                                                        abi_long arg8);
+            pass_syscall(cpu_env,TARGET_NR_futex,arg1, arg2, arg3,
+                        arg4, arg5, arg6, 0, 0);
+
+        }
+        else
+        {
+            ret = do_futex(arg1, arg2, arg3, arg4, arg5, arg6);  
+        }
+        
+    }
         break;
 #if defined(TARGET_NR_inotify_init) && defined(__NR_inotify_init)
     case TARGET_NR_inotify_init:

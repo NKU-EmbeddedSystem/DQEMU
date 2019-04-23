@@ -23,6 +23,7 @@
 
 #include <sys/socket.h>
 #include "offload_common.h"
+#include <sys/timeb.h>
 static void try_recv(int);
 int sktfd;
 int client_socket;
@@ -78,6 +79,8 @@ static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread
 static int syscall_ready_flag; static pthread_mutex_t syscall_recv_mutex; static pthread_cond_t syscall_recv_cond;
 static int futex_uaddr_changed_flag; static pthread_mutex_t futex_mutex; static pthread_cond_t futex_cond;
 static void* exec_segfault_addr; static void* syscall_segfault_addr;
+static int pgfault_time_sum;
+static int syscall_time_sum;
 abi_long result_global;
 
 
@@ -112,7 +115,7 @@ static void offload_server_init(void)
 	sockaddr.sin_family = AF_INET;
 	sockaddr.sin_port = htons(server_port_of(offload_server_idx));
 	
-
+	//ip_addr
 	sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 	pthread_mutex_init(&socket_mutex, NULL);
 	int tmp = 1;
@@ -137,6 +140,7 @@ static void offload_server_init(void)
 	pthread_mutex_init(&syscall_recv_cond,NULL);
 	pthread_mutex_init(&futex_mutex, NULL);
 	pthread_cond_init(&futex_cond, NULL);
+	pgfault_time_sum = 0;
 }
 
 static void load_cpu(void)
@@ -617,6 +621,9 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
     int is_write = ((uc->uc_mcontext.gregs[REG_ERR] & 0x2) != 0);
     
 	fprintf(stderr, "[offload_segfault_handler]\tsegfault on page addr: %x, perm: %s\n", page_addr, is_write?"WRITE|READ":"READ");
+	// sum time on pagefault
+	struct timeb t, tend;
+    ftime(&t);
 	//get_client_page(is_write, guest_page);
 	
 	// send page request, sleep until content is sent back.
@@ -653,7 +660,13 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 		fprintf(stderr, "[offload_segfault_handler]\tsyscall segfault awake\n");
 	}
 
-	
+	ftime(&tend);
+	int secDiff = tend.time - t.time;
+	secDiff *= 1000;
+	secDiff += (tend.millitm - t.millitm);
+	pgfault_time_sum += secDiff;
+	fprintf(stderr, "[offload_segfault_handler]\tbegin: %d:%d; end: %d:%d, used: %dms, now total is: %dms", t.time, t.millitm, tend.time, tend.millitm, secDiff, pgfault_time_sum);
+
     return 1;
 }
 
@@ -1073,6 +1086,9 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	// }
 	// fprintf(stderr, "[pass_syscall]\targ2 = %d\n",arg2);
 	fprintf(stderr, "[pass_syscall]\tpassing syscall to center\n");
+	// mark1 syscall time sum
+	struct timeb t, tend;
+    ftime(&t);
 	extern void print_syscall(int num,
               abi_long arg1, abi_long arg2, abi_long arg3,
               abi_long arg4, abi_long arg5, abi_long arg6);
@@ -1127,6 +1143,14 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	fprintf(stderr, "[pass_syscall]\tI'm awake!\n");
 	abi_long result = result_global;
 	fprintf(stderr, "[pass_syscall]\returning result %p!\n", result);
+	// calculate time diff
+	ftime(&tend);
+	int secDiff = tend.time - t.time;
+	secDiff *= 1000;
+	secDiff += (tend.millitm - t.millitm);
+	syscall_time_sum += secDiff;
+	fprintf(stderr, "[pass_syscall]\tbegin: %d:%d; end: %d:%d, used: %dms, now total is: %dms", t.time, t.millitm, tend.time, tend.millitm, secDiff, syscall_time_sum);
+
 	return result;
 
 }
@@ -1186,6 +1210,7 @@ static void try_recv(int size)
 		else if (res == 0)
 		{
 			fprintf(stderr, "[try_recv]\tconnection closed.\n");
+			fprintf(stderr, "[try_recv]\tnow pagefault total time = %d, syscall total time = %d\n", pgfault_time_sum, syscall_time_sum);
 			exit(0);
 		}
 		else
