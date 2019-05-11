@@ -2,6 +2,8 @@
 *.udb
 *.o
 *.swp
+*.d
+*.o
 
 accel/kvm/trace.c
 accel/kvm/trace.c-timestamp
@@ -870,3 +872,7 @@ log_server.txt
 
 tags
 linux-user/tags
+.*
+capstone/cmake-build-debug/
+capstone/include/CMakeLists.txt
+compile_commands.json

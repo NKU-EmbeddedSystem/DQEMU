@@ -24,6 +24,7 @@
 #include <sys/socket.h>
 #include "offload_common.h"
 #include <sys/timeb.h>
+
 static void try_recv(int);
 int sktfd;
 int client_socket;
@@ -141,6 +142,7 @@ static void offload_server_init(void)
 	pthread_mutex_init(&futex_mutex, NULL);
 	pthread_cond_init(&futex_cond, NULL);
 	pgfault_time_sum = 0;
+
 }
 
 static void load_cpu(void)
@@ -600,19 +602,29 @@ static void offload_send_page_ack(target_ulong page_addr, uint32_t perm)
 	//pthread_mutex_unlock(&socket_mutex);
 }
 
+#define PAGE_SHIFT 12
+#define VPTPTR 0xfffffffe00000000UL
+static inline unsigned long
+pt_index(unsigned long addr, int level)
+{
+	return (addr >> (PAGE_SHIFT + (10 * level))) & 0x3ff;
+}
+
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 {
+	struct timeb t, tend;
+    ftime(&t);
     siginfo_t *info = pinfo;
     ucontext_t *uc = (ucontext_t *)puc;
     unsigned long host_addr = (unsigned long)info->si_addr;
     //TODO ... do h2g on the host_addr to get the address of the segfault
 	
     unsigned long  guest_addr = h2g(host_addr);
-	
-	
-	
-    target_ulong page_addr = guest_addr & TARGET_PAGE_MASK;
+	fprintf(stderr, "[offload_segfault_handler]\tguest addr is %p, host_addr is %p, pte-0 %p, pte-1 %p, pte-2 %p, VP-2 %p, VP-1%p\n", 
+			guest_addr, host_addr, pt_index(host_addr, 0), pt_index(host_addr, 1), pt_index(host_addr, 2), pt_index(VPTPTR, 2), pt_index(VPTPTR, 1));
+
+	target_ulong page_addr = guest_addr & TARGET_PAGE_MASK;
     //fprintf(stderr, "Accessed guest addr %lx\n", guest_addr);
 	
     //fprintf(stderr, "\nHost instruction address is %p\n", uc->uc_mcontext.gregs[REG_RIP]);
@@ -622,8 +634,7 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
     
 	fprintf(stderr, "[offload_segfault_handler]\tsegfault on page addr: %x, perm: %s\n", page_addr, is_write?"WRITE|READ":"READ");
 	// sum time on pagefault
-	struct timeb t, tend;
-    ftime(&t);
+	
 	//get_client_page(is_write, guest_page);
 	
 	// send page request, sleep until content is sent back.
@@ -635,6 +646,7 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 		page_recv_flag = 0;
 		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
 		fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		//TODO check if 
 		while (page_recv_flag == 0)
 		{
 			pthread_cond_wait(&page_recv_cond, &page_recv_mutex);
@@ -1201,6 +1213,7 @@ static void try_recv(int size)
 	while (nleft > 0)
 	{
 		res = recv(client_socket, ptr, nleft, 0);
+		fprintf(stderr, "[try_recv]\treceived %d\n", res);
 		if (res < 0)
 		{
 			fprintf(stderr, "[try_recv]\terrno: %d\n", res);
@@ -1223,5 +1236,6 @@ static void try_recv(int size)
 		}
 		
 	}
+	
 	return size;
 }
