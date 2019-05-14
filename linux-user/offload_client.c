@@ -4,7 +4,7 @@
 
 #define MAP_PAGE_BITS 12
 // prefetch
-#define MAX_WORKER 100
+#define MAX_WORKER 20
 #define PREFETCH_PAGE_MAX 1000
 #define PREFETCH_LAUNCH_VALVE 4
 #define PREFETCH_LIFE 20
@@ -162,7 +162,9 @@ struct pgft_record
 };
 
 static struct futex_record * futex_table;
-static struct pgft_record **prefetch_table;
+static struct pgft_record prefetch_table[MAX_WORKER];
+static void prefetch_handler(uint32_t page_addr, int idx);
+static void show_prefetch_list(int idx);
 
 
 
@@ -487,13 +489,7 @@ static void offload_client_init(void)
 	communication_recv_sum = 0;
 	has_pending_request = 0;
 	// List[i] is the list for worker#i
-	prefetch_table = (struct pgft_record**)malloc(MAX_WORKER * sizeof(struct pgft_record*));
-	memset(prefetch_table, 0, MAX_WORKER * sizeof(struct pgft_record*));
-	for (int i = 0; i < MAX_WORKER; i++)
-	{
-		prefetch_table[i] = (struct pgft_record*)malloc(sizeof(struct pgft_record));
-		memset(prefetch_table[i], 0, sizeof(struct pgft_record));
-	}
+	show_prefetch_list(offload_client_idx);
 	return;
 }
 
@@ -966,13 +962,7 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 	if ((res != 0 )||1)//we throw a thread.
 	{
 		/* trylock failed, someone is asking for the page */
-
 		offload_log(stderr, "[offload_client_fetch_page]\tlock failed, count: %d, holder: %d throwing new thread...\n", pmd->mutex_count, pmd->mutex_holder);
-		// if (pmd->mutex_holder == requestor_idx)
-		// {
-		// 	fprintf(stderr, "[offload_client_fetch_page]\tlock failed, but requestor #%d == holder #%d, ignoring...\n", requestor_idx, pmd->mutex_holder);
-		// 	return;
-		// }
 		struct info* param = (struct info*)malloc(sizeof(struct info));
 		param->requestor_idx = requestor_idx;
 		param->addr = addr;
@@ -986,11 +976,6 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 		pending_request.requestor = requestor_idx;
 		pending_request.addr = addr;
 		pending_request.perm = perm;
-
-		/*pending_requestor = requestor_idx;
-		pending_request_addr = addr;
-		pending_page_request_perm = perm;*/
-
 		last_flag_lock = 0;
 
 		return -1;
@@ -999,62 +984,6 @@ static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int p
 	{
 		fprintf(stderr, "[offload_client_fetch_page]\twhat happened?\n");
 		exit(0);
-		// /* trylock succeed, fetching page */
-		// pmd->mutex_holder = requestor_idx;
-		// pmd->mutex_count++;
-		// offload_log(stderr, "[offload_client_fetch_page]\tlock succeed, count: %d, holder: %d\n", pmd->mutex_count, pmd->mutex_holder);
-
-		// pmd->requestor = requestor_idx;
-		// if (perm == 2)
-		// {
-		// 	pmd->invalid_count = 0;
-		// 	/* read->write, only one */
-		// 	if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
-		// 	{
-		// 		fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
-		// 		offload_send_page_upgrade(requestor_idx, page_addr, 2);
-		// 		fprintf(stderr, "[offload_client_fetch_page]\tunlocking...%p\n", &pmd->owner_set_mutex);
-		// 		pthread_mutex_unlock(&pmd->owner_set_mutex);
-		// 	}
-		// 	else
-		// 	/* invalid_count = the number of sharing copies to invalidate */
-		// 	for (int i = 0; i < pmd->owner_set.size; i++)
-		// 	{
-
-		// 		int idx = pmd->owner_set.element[i];
-		// 		/* if read->write, donnot ask itself to send the page!!!!! */
-
-		// 		if (idx == requestor_idx)
-		// 		{
-		// 			continue;
-		// 		}
-
-		// 		pmd->invalid_count++;
-		// 		/* invalidate pages on other threads, retrieve the permission */
-		// 		offload_send_page_request(idx, page_addr, 2, requestor_idx);
-		// 	}
-
-		// }
-		// else if (perm == 1)
-		// {
-		// 	if (pmd->owner_set.size == 0)
-		// 	{
-		// 		offload_log(stderr, "[offload_client_fetch_page]\terror: no one has the page\n");
-		// 		exit(-1);
-		// 	}
-		// 	/* revoke page as shared page */
-		// 	//for (int i=0;i<pmd->owner_set.size;i++)
-		// 	//{
-		// 	//	fprintf(stderr,"\tnode #%d", pmd->owner_set.element[i]);
-		// 	//}
-		// 	print_holder(addr);
-		// 	fprintf(stderr,"\n");
-		// 	offload_send_page_request(pmd->owner_set.element[0], page_addr, 1, requestor_idx);
-		// }
-		// fprintf(stderr, "[offload_client_fetch_page]\t sent\n");
-		// last_flag_lock = 1;
-
-		// return 0;
 	}
 
 }
@@ -1194,6 +1123,7 @@ static void offload_process_page_request(void)
 	p += sizeof(uint32_t);*/
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
 	offload_client_fetch_page(offload_client_idx, page_addr, perm);
+	prefetch_handler(page_addr, offload_client_idx);
 }
 
 static int try_recv(int size)
@@ -2576,44 +2506,66 @@ static void offload_send_syscall_result(int idx, abi_long result)
             get_number(), result);
 }
 
+static void show_prefetch_list(int idx)
+{
+	fprintf(stderr, "[show_prefetch_list]\tShowing for %d\n", idx);
+    struct pgft_record *p = &prefetch_table[idx];	//pagefault node
+	while (p) {
+		fprintf(stderr, "page_addr %p\t|life %d\t|wait_addr %p\t|wait_hit_count %d\t|page_hit_count %d\t|pref_count %d|\n",
+				p->page_addr, p->life, p->wait_addr, p->wait_hit_count, p->page_hit_count, p->pref_count);
+		p = p->next;
+	}
+}
+
 // for prefetch page for server
 //TODO weight how much does this cost
 //TODO exclusive send test & how much would it cost(mutex)
 static void prefetch_handler(uint32_t page_addr, int idx)
 {
-    struct pgft_record *p = prefetch_table[idx]->next;	//pagefault node
+	show_prefetch_list(idx);
+    struct pgft_record *p = prefetch_table[idx].next;	//pagefault node
 	struct pgft_record *pre = &prefetch_table[idx];		//previous node for deleting p
 	struct pgft_record *psave = NULL;
-    // search all for wait_addr and dec others' life
+    // search **all** for wait_addr and dec others' life
     while (p)
 	{
-
-		if (p->wait_addr != page_addr)
-		{					// TODO: if hit the same page. Deal with false sharing
+		// Hit page_addr, regard it as conflict page
+		if (p->page_addr == page_addr) {
+			p->life += PREFETCH_LIFE;
+			if (++p->page_hit_count >= 10) {
+				fprintf(stderr, "[prefetch_handler]\tConflict page %p found! Not implemented!\n", page_addr);
+			}
+			pre = p;
+			p = p->next;
+			return;
+		}
+		// search **all** for wait_addr and dec others' life
+		// Miss
+		if (p->wait_addr != page_addr) {
 			p->life--;
-			// cleanup dead node
-			if (p->life == 0)	
-			{
+			/* 1. If `life == 0` then remove it.
+			 * 2. Forward to next node */
+			if (p->life == 0) {
+				fprintf(stderr, "[prefetch_handler]\tNode %p is dead. Deleting from list.\n", p->page_addr);
 				pre->next = p->next;
 				free(p);
 				p = pre->next;
+				continue;
 			}
-			else
-			{
-				// p = next one, save previous
-				pre = p;
-				p = p->next;
-			}
+			pre = p;
+			p = p->next;
 		} 
-		else
-		{		// hit predicted address
+		// hit predicted address, save it to psave
+		else {
+			fprintf(stderr, "[prefetch_handler]\tfound hit wait_addr! of page %p\n", p->page_addr);
 			psave = p;
 			pre = p;
 			p = p->next;
 		}
 	}
-	if (p)// found
+	if (psave)// found
     {
+		p = psave;
         fprintf(stderr, "[prefetch_handler]\tWait addr %p of page %p found!\n", page_addr, p->page_addr);
         p->wait_hit_count++;
 		if (p->wait_hit_count < 4)  				// not started
@@ -2621,22 +2573,24 @@ static void prefetch_handler(uint32_t page_addr, int idx)
 			p->wait_addr = page_addr + PAGE_SIZE;		// wait at next page
             p->life = PREFETCH_LIFE;
         } 
-		else    // >=4 , launched
-        {
-            p->pref_count = p->wait_hit_count * 2;
+		else {    // >=4 , launched
+			if (p->pref_count == 0) p->pref_count = 10;
+            else  p->pref_count *= 2;
+			/* wait at next page */
             p->wait_addr = page_addr + (p->pref_count + 1)*PAGE_SIZE;
             fprintf(stderr, "[prefetch_handler]\tPrefetching for %p for %d pages, waiting at %p\n", page_addr, p->pref_count, p->wait_addr);
-			
 		}
 
 	}
-	else
-	{		// add new node
-		
+	else {		// add new node
+        fprintf(stderr, "[prefetch_handler]\tAdd new node %p!\n", page_addr);
+		p = (struct pgft_record*)malloc(sizeof(struct pgft_record));
+		memset(p, 0, sizeof(struct pgft_record));
+		p->page_addr = page_addr;
+		p->life = PREFETCH_LIFE;
+		p->wait_addr = page_addr + PAGE_SIZE;
+		pre->next = p;
+        fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\n", page_addr);
 	}
-	
-	// search for page_addr & add
-
-
-
+	show_prefetch_list(idx);
 }
