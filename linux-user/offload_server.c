@@ -37,7 +37,7 @@ extern CPUArchState *env;
 uint32_t stack_end, stack_start;
 extern pthread_mutex_t cmpxchg_mutex;
 int futex_result;
-extern int autoSend(int,char*,int,int);
+static int autoSend(int,char*,int,int);
 static void offload_server_init(void);
 static void offload_server_daemonize(void);
 static void offload_process_start(void);
@@ -83,7 +83,6 @@ static void* exec_segfault_addr; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
 static int syscall_time_sum;
 abi_long result_global;
-
 
 /* get packet_counter of net_buffer */
 static uint32_t get_number(void)
@@ -1238,4 +1237,36 @@ static void try_recv(int size)
 	}
 	
 	return size;
+}
+
+
+static int autoSend(int Fd,char* buf, int length, int flag)
+{
+	char* ptr = buf;
+	int nleft = length, res;
+	while (nleft > 0)
+	{
+		fprintf(stderr, "[autoSend]\tsendding left: %d\n", nleft);
+
+		if ((res = send(Fd, ptr, nleft, flag)) < 0)
+		{
+			if (res == -1)
+			{
+				sleep(0.001);
+				fprintf(stderr, "[autoSend]\tsend EAGAIN\n");
+				perror("autoSend");
+				exit(233);
+				continue;
+			}
+			else
+			{
+				fprintf(stderr, "[autoSend]\tsend failed, errno: %d\n", res);
+				perror("autoSend");
+				exit(0);
+			}
+		}
+		nleft -= res;
+		ptr += res;
+	}
+	return length;
 }

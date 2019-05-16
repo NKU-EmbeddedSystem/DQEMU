@@ -163,7 +163,7 @@ struct pgft_record
 
 static struct futex_record * futex_table;
 static struct pgft_record prefetch_table[MAX_WORKER];
-static void prefetch_handler(uint32_t page_addr, int idx);
+static int prefetch_handler(uint32_t page_addr, int idx);
 static void show_prefetch_list(int idx);
 
 
@@ -230,13 +230,15 @@ struct request_t
 
 static __thread struct request_t pending_request;
 
-int autoSend(int Fd,char* buf, int length, int flag);
+static int autoSend(int Fd,char* buf, int length, int flag);
 
 extern __thread int offload_client_idx;
 extern abi_ulong target_brk;
 extern abi_ulong target_original_brk;
 extern int offload_count;
 pthread_mutex_t offload_count_mutex = PTHREAD_MUTEX_INITIALIZER;
+static __thread pthread_mutex_t send_mutex[MAX_WORKER];
+static __thread pthread_cond_t send_cond[MAX_WORKER];
 __thread CPUArchState *client_env;
 int skt[MAX_OFFLOAD_NUM];
 #define BUFFER_PAYLOAD_P (net_buffer + TCP_HEADER_SIZE)
@@ -485,6 +487,8 @@ static void offload_client_init(void)
 
 	pthread_mutex_init(&page_recv_mutex, NULL);
 	pthread_cond_init(&page_recv_cond, NULL);
+	pthread_mutex_init(&send_mutex[offload_client_idx], NULL);
+	pthread_cond_init(&send_cond[offload_client_idx], NULL);
 	communication_send_sum = 0;
 	communication_recv_sum = 0;
 	has_pending_request = 0;
@@ -749,15 +753,17 @@ static void offload_send_start(void)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
-	res = autoSend(skt[offload_client_idx], net_buffer, (p - net_buffer), 0);
+	res = autoSend(offload_client_idx, net_buffer, (p - net_buffer), 0);
 	fprintf(stderr, "[send]\tsent %d bytes\n", res);
 	//pthread_mutex_unlock(&socket_mutex);
 }
 
-int autoSend(int Fd,char* buf, int length, int flag)
+static int autoSend(int idx,char* buf, int length, int flag)
 {
+	int Fd = skt[idx];
 	char* ptr = buf;
 	int nleft = length, res;
+	pthread_mutex_lock(&send_mutex[idx]);
 	while (nleft > 0)
 	{
 		fprintf(stderr, "[autoSend]\tsendding left: %d\n", nleft);
@@ -769,6 +775,7 @@ int autoSend(int Fd,char* buf, int length, int flag)
 				sleep(0.001);
 				fprintf(stderr, "[autoSend]\tsend EAGAIN\n");
 				perror("autoSend");
+				exit(233);
 				continue;
 			}
 			else
@@ -781,6 +788,7 @@ int autoSend(int Fd,char* buf, int length, int flag)
 		nleft -= res;
 		ptr += res;
 	}
+	pthread_mutex_unlock(&send_mutex[idx]);
 	communication_send_sum += length;
 	fprintf(stderr, "[autoSend]\tnow communication_send_sum is %d\n", communication_send_sum);
 	return length;
@@ -803,7 +811,7 @@ static void offload_send_page_upgrade(int idx, target_ulong page_addr, int perm)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_UPGRADE);
 	fprintf(stderr, "[offload_send_page_upgrade]\tsending upgrade to perm: %d in page %p to #%d\n", perm, page_addr, idx);
 	int res;
-	if (res = autoSend(skt[idx], net_buffer, p - net_buffer, 0) < 0)
+	if (res = autoSend(idx, net_buffer, p - net_buffer, 0) < 0)
 	{
 		fprintf(stderr, "page upgrade sending failed\n");
 	}
@@ -1123,7 +1131,13 @@ static void offload_process_page_request(void)
 	p += sizeof(uint32_t);*/
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
 	offload_client_fetch_page(offload_client_idx, page_addr, perm);
-	prefetch_handler(page_addr, offload_client_idx);
+	int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
+	if (prefetch_count > 0) {
+		fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
+		for (int i = 0; i < prefetch_count; i++) {
+			offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, perm);
+		}
+	}
 }
 
 static int try_recv(int size)
@@ -1875,7 +1889,7 @@ static void offload_send_page_request(int idx, target_ulong page_addr, uint32_t 
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_REQUEST);
 
-	int res = autoSend(skt[idx], net_buffer, p - net_buffer, 0);
+	int res = autoSend(idx, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_send_page_request]\tpage request %x sending to %d failed\n", g2h(page_addr), idx);
@@ -1909,7 +1923,7 @@ static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t 
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_CONTENT);
 
-	autoSend(skt[idx], buf, pp - buf, 0);
+	autoSend(idx, buf, pp - buf, 0);
 
 	fprintf(stderr, "[offload_send_page_content]\tsent page content %x to #%d, perm %d, packet#%d\n", page_addr, idx, perm, get_number());
 	//pthread_mutex_unlock(&socket_mutex);
@@ -1968,7 +1982,7 @@ static void offload_send_mutex_verified(int idx)
 	char *pp = buf + sizeof(struct tcp_msg_header);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_VERYFIED);
-	autoSend(skt[idx], buf, pp - buf, 0);
+	autoSend(idx, buf, pp - buf, 0);
 	fprintf(stderr, "[offload_send_cmpxchg_verified]\tsent cmpxchg verified to #%d packet#%d\n", idx, get_number());
 }
 
@@ -1984,7 +1998,7 @@ static void offload_send_tid(int idx, uint32_t tid)
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_YOUR_TID);
 
 
-	autoSend(skt[idx], buf, pp - buf, 0);
+	autoSend(idx, buf, pp - buf, 0);
 	fprintf(stderr, "[offload_send_tid]\tsent tid = %p to #%d packet#%d\n", tid, idx, get_number());
 }
 
@@ -2039,7 +2053,7 @@ static void offload_send_page_perm(int idx, target_ulong page_addr, int perm)
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_PERM);
 
-	int res = autoSend(skt[idx], net_buffer, p - net_buffer, 0);
+	int res = autoSend(idx, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_send_page_perm]\tpage %x perm to %d sent failed res: %d errno: %d\n", page_addr, idx, res, errno);
@@ -2250,7 +2264,7 @@ static void offload_client_send_futex_wait_result(int result)
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FUTEX_WAIT_RESULT);
 
-	int res = autoSend(skt[offload_client_idx], net_buffer, p - net_buffer, 0);
+	int res = autoSend(offload_client_idx, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_client_send_futex_wait_result]\tsent futex wait result failed\n");
@@ -2271,7 +2285,7 @@ static void offload_client_send_futex_wake_result(int result)
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FUTEX_WAKE_RESULT);
 
-	int res = autoSend(skt[offload_client_idx], net_buffer, p - net_buffer, 0);
+	int res = autoSend(offload_client_idx, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
 		fprintf(stderr, "[offload_client_send_futex_wake_result]\tsent futex wake result failed\n");
@@ -2501,7 +2515,7 @@ static void offload_send_syscall_result(int idx, abi_long result)
 	pp += sizeof(abi_long);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_RES);
-	autoSend(skt[idx], buf, pp - buf, 0);
+	autoSend(idx, buf, pp - buf, 0);
     fprintf(stderr, "[offload_send_syscall_result]\tsent syscall result to #%d packet#%d with ret=%p\n", idx,
             get_number(), result);
 }
@@ -2520,12 +2534,13 @@ static void show_prefetch_list(int idx)
 // for prefetch page for server
 //TODO weight how much does this cost
 //TODO exclusive send test & how much would it cost(mutex)
-static void prefetch_handler(uint32_t page_addr, int idx)
+static int prefetch_handler(uint32_t page_addr, int idx)
 {
 	show_prefetch_list(idx);
     struct pgft_record *p = prefetch_table[idx].next;	//pagefault node
 	struct pgft_record *pre = &prefetch_table[idx];		//previous node for deleting p
 	struct pgft_record *psave = NULL;
+	int ret = 0;
     // search **all** for wait_addr and dec others' life
     while (p)
 	{
@@ -2537,7 +2552,7 @@ static void prefetch_handler(uint32_t page_addr, int idx)
 			}
 			pre = p;
 			p = p->next;
-			return;
+			return 0;
 		}
 		// search **all** for wait_addr and dec others' life
 		// Miss
@@ -2574,8 +2589,9 @@ static void prefetch_handler(uint32_t page_addr, int idx)
             p->life = PREFETCH_LIFE;
         } 
 		else {    // >=4 , launched
-			if (p->pref_count == 0) p->pref_count = 10;
+			if (p->pref_count == 0) p->pref_count = 100;
             else  p->pref_count *= 2;
+			ret = p->pref_count;
 			/* wait at next page */
             p->wait_addr = page_addr + (p->pref_count + 1)*PAGE_SIZE;
             fprintf(stderr, "[prefetch_handler]\tPrefetching for %p for %d pages, waiting at %p\n", page_addr, p->pref_count, p->wait_addr);
@@ -2593,4 +2609,5 @@ static void prefetch_handler(uint32_t page_addr, int idx)
         fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\n", page_addr);
 	}
 	show_prefetch_list(idx);
+	return ret;
 }
