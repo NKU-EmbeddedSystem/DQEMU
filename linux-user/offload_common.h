@@ -8,7 +8,7 @@
 #include <string.h>
 #define PORT_BASE 12345
 
-#define NET_BUFFER_SIZE 1000000
+#define NET_BUFFER_SIZE 3000000
 #define MAX_OFFLOAD_NUM 100
 
 #define IDX_CLIENT 0

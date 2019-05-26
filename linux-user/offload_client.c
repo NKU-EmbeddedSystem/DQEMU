@@ -8,6 +8,7 @@
 #define PREFETCH_PAGE_MAX 1000
 #define PREFETCH_LAUNCH_VALVE 4
 #define PREFETCH_LIFE 20
+#define PREFETCH_BEGIN_PAGE_COUNT 10
 
 //#define _ATFILE_SOURCE
 #include "qemu/osdep.h"
@@ -176,6 +177,7 @@ static void show_prefetch_list(int idx);
 #define fprintf offload_log
 
 #define MUTEX_LIST_MAX 10
+#define FUTEX_RECORD_MAX 10
 
 #define WORKER_COUNT 10
 
@@ -482,8 +484,8 @@ static void offload_client_init(void)
 	//struct timeval timeout={1, 0};
 	//int ret = setsockopt(skt[offload_client_idx], SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
 
-	futex_table = (struct futex_record*)malloc(10*sizeof(struct futex_record));
-	memset(futex_table, 0, 10*sizeof(struct futex_record));
+	futex_table = (struct futex_record*)malloc(FUTEX_RECORD_MAX*sizeof(struct futex_record));
+	memset(futex_table, 0, FUTEX_RECORD_MAX * sizeof(struct futex_record));
 
 	pthread_mutex_init(&page_recv_mutex, NULL);
 	pthread_cond_init(&page_recv_cond, NULL);
@@ -612,7 +614,7 @@ static int dump_self_maps(void)
 				binary_end_address = end;
 			}
 
-			fprintf(stderr, "memory region: %x to %x, host: %x to %x\n", start, end, g2h(start), g2h(end));
+			fprintf(stderr, "memory region: %x to %x, host: %x to %x, %c%c%c\n", start, end, g2h(start), g2h(end), flag_r, flag_w, flag_x);
 			*(uint32_t *)p = start;
 			p += sizeof(uint32_t);
 
@@ -673,6 +675,8 @@ static void dump_code(void)
 	cpu_memory_rw_debug(ENV_GET_CPU(client_env), 0x10324, tmp, 4, 1);
 	fprintf(stderr, "[dump_code]\t0x10324 is at host %x. = %x = %x\n", g2h(0x10324), *((uint32_t *) g2h(0x10324)), tmp[0]);
 	target_disas(stderr, ENV_GET_CPU(client_env), client_env->regs[15], 10);
+	// why segmentation fault???????????????
+	//mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ);
 	memcpy((void *)p, (void *)(g2h(binary_start_address )), (unsigned int)binary_end_address - binary_start_address);
 	//fprintf(stderr, "here: %d %d %d\n", );
 	p += (uint32_t)binary_end_address - binary_start_address;
@@ -1185,79 +1189,6 @@ static int try_recv(int size)
 	return size;
 }
 
-/*
-int try_recv(int size)
-{
-	int res;
-	int sum = 0;
-	int is_first = 1;
-	//offload_log(stderr, "[try_recv]\treceiving\n");
-
-	while (1)
-	{
-		//offload_log(stderr, "[try_recv]\treceiving\n");
-		res = recv(skt[offload_client_idx], net_buffer + sum, size - sum, 0);
-		//offload_log(stderr, "[try_recv]\treceiving done, calculating\n");
-		sum += res;
-		if (res == 0)
-		{
-			// connection closed
-			offload_log(stderr, "[try_recv]\tconnection closed\n");
-			
-			exit(0);
-			return -2;
-		}
-		else if (res < 0)
-		{
-			// error:
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-			{
-
-				if (is_first == 1)
-				{
-					// no packet availiable, return
-					return 0;
-				}
-				else
-				{
-					// though we didn't see the rest of the packet, but we've already received parts of it, we have to wait and finish receiving entirely.
-					continue;
-				}
-			}
-			else
-			{
-				// other erors that we wouldn't like to see:
-				offload_log(stderr, "[try_recv]\terror#%d\n", errno);
-				exit(0);
-			}
-
-		}
-		else
-		{
-			// got something
-
-			if (sum == size)
-			{
-				// wish fulfilled:
-				return size;
-			}
-			else if (sum < size)
-			{
-				// haven't got the whole packet yet, have to recv again:
-				offload_log(stderr, "[try_recv]\tsum: %d, size: %d, continuing...\n", sum, size);
-				continue;
-			}
-			else
-			{
-				// could this be happening?
-				offload_log(stderr, "[try_recv]\trecv more than expected\n");
-				exit(0);
-			}
-		}
-	}
-
-}
-*/
 static void offload_client_routine(void)
 {
 
@@ -1474,7 +1405,7 @@ static void futex_table_add(uint32_t futex_addr, int idx)
 	while ((futex_table[i].isInUse) && (futex_table[i].futex_addr != futex_addr))
 	{
 		i++;
-		if (i == 10)
+		if (i == FUTEX_RECORD_MAX)
 		{
 			fprintf(stderr, "[futex_table_add]\tFatal error: futex_table full! Please add more space.\n");
 			exit(-1);
@@ -1513,7 +1444,7 @@ static void print_futex_table()
 	char tmp[200];
 	struct futex_record * p;
 	struct Node * pnode;
-	for (; i < 10; i++)
+	for (; i < FUTEX_RECORD_MAX; i++)
 	{
 		p = &futex_table[i];
 		//fprintf(stderr, "[print_futex_table]\ttest point1\n");
@@ -1539,58 +1470,55 @@ static void print_futex_table()
 
 }
 
-static void futex_table_wake(uint32_t futex_addr, int num, int idx)
+/*	Return pointer to the futex_record containing futex_addr
+	in the futex_table
+	NULL for not found
+*/
+static struct futex_record * futex_table_find(uint32_t futex_addr)
 {
-	if ((num < INT_MAX) && (num > 1))
-	{
-		fprintf(stderr, "[futex_table_wake]\tnum < INT_MAX and >1 not implemented!\n");
-		exit(-1);
-	}
-	fprintf(stderr, "[futex_table_wake]\tWaking up futex on %p, num = %d\n", futex_addr, num);
-	print_futex_table();
-	//TODO num<int_max
 	int i = 0;
-	struct futex_record * pr = futex_table;
+	struct futex_record *pr = futex_table;
 	// find the record
-	fprintf(stderr, "[futex_table_wake]\ttest point1\n");
 	while (pr->futex_addr != futex_addr || pr->isInUse == 0)
 	{
 		i++;
 		pr = &futex_table[i];
-		if (i == 10)
+		if (i == FUTEX_RECORD_MAX)
 		{
-			fprintf(stderr, "[futex_table_wake]\tfutex doesn't exist.\n");
-			offload_send_syscall_result(idx, 0);
-			return;
+			fprintf(stderr, "[futex_table_find]\tfutex doesn't exist.\n");
+			return NULL;
 		}
 	}
-	// may not exist!!
-	fprintf(stderr, "[futex_table_wake]\ttest point2\n");
 
+	fprintf(stderr, "[futex_table_find]\tfound futex record %d matched\n", i);
+	return pr;
+}
+
+static void futex_table_wake(uint32_t futex_addr, int num, int idx)
+{
+	fprintf(stderr, "[futex_table_wake]\tWaking up futex on %p, num = %d\n", futex_addr, num);
+	print_futex_table();
+
+	struct futex_record *pr = futex_table_find(futex_addr);
+	if (!pr) {
+		offload_send_syscall_result(idx, 0);
+		return;
+	}
 	// wake up all servers
-	fprintf(stderr, "[futex_table_wake]\tfound futex record %d matched\n", i);
 	struct Node *pnode = pr->head, *tmp;
 	int count = 0;
 	while (pnode)
 	{
-		fprintf(stderr, "[futex_table_wake]\ttest point3.1\n");
-		fprintf(stderr, "[futex_table_wake]\ttest point3.1, pnode = %p\n", pnode);
-		fprintf(stderr, "[futex_table_wake]\ttest point3.1, pnode->val = %p\n", pnode->val);
 		offload_send_syscall_result(pnode->val, 0);
-		fprintf(stderr, "[futex_table_wake]\ttest point3.11\n");
 		tmp = pnode;
-		fprintf(stderr, "[futex_table_wake]\ttest point3.12\n");
 		pnode = pnode->next;
-		fprintf(stderr, "[futex_table_wake]\ttest point3.2\n");
 		free(tmp);
-		fprintf(stderr, "[futex_table_wake]\ttest point3.3\n");
 		count++;
-		if (--num == 0) break;
+		if (count == num) break;
 	}
-	fprintf(stderr, "[futex_table_wake]\ttest point4\n");
+	// Clean up
 	if (pnode)	//if num < number of waiters == there is someone left, fix the list
 	{
-
 		pr->head = pnode;
 	}
 	else	// there is no one left, cleanup
@@ -1603,6 +1531,122 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx)
 	print_futex_table();
 	offload_send_syscall_result(idx, count);
 }
+
+/*        FUTEX_CMP_REQUEUE (since Linux 2.6.7)
+		This operation first checks whether the location uaddr still
+		contains the value val3.  If not, the operation fails with the
+		error EAGAIN.  Otherwise, the operation wakes up a maximum of
+		val waiters that are waiting on the futex at uaddr.  If there
+		are more than val waiters, then the remaining waiters are
+		removed from the wait queue of the source futex at uaddr and
+		added to the wait queue of the target futex at uaddr2.  The
+		val2 argument specifies an upper limit on the number of
+		waiters that are requeued to the futex at uaddr2.
+
+		The load from uaddr is an atomic memory access (i.e., using
+		atomic machine instructions of the respective architecture).
+		This load, the comparison with val3, and the requeueing of any
+		waiters are performed atomically and totally ordered with
+		respect to other operations on the same futex word.
+
+		Typical values to specify for val are 0 or 1.  (Specifying
+		INT_MAX is not useful, because it would make the
+		FUTEX_CMP_REQUEUE operation equivalent to FUTEX_WAKE.)  The
+		limit value specified via val2 is typically either 1 or
+		INT_MAX.  (Specifying the argument as 0 is not useful, because
+		it would make the FUTEX_CMP_REQUEUE operation equivalent to
+		FUTEX_WAIT.)
+
+		RETURN VALUE
+		Returns the total number of waiters that were woken up or
+		requeued to the futex for the futex word at uaddr2.  If this
+		value is greater than val, then the difference is the number
+		of waiters requeued to the futex for the futex word at uaddr2.
+
+*/
+int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2,
+							uint32_t uaddr2, int val3, int idx)
+{
+	fprintf(stderr, "[futex_table_cmp_requeue]\tuaddr %p, futex_op %p, val %p, val2 %p, uaddr2 %p, val3 %p of idx %d\n",
+			uaddr, futex_op, val, val2, uaddr2, val3, idx);
+	print_futex_table();
+	if (*(int *)(g2h(uaddr)) != val3)
+	{
+		fprintf(stderr, "[futex_table_cmp_requeue]\t*(int*)(futex_addr) != cmpval, returning with EAGAIN...%p\n", TARGET_EAGAIN);
+		offload_send_syscall_result(idx, TARGET_EAGAIN);
+		return TARGET_EAGAIN;
+	}
+	struct futex_record *pr = futex_table_find(uaddr);
+	if (!pr) {
+		fprintf(stderr, "[futex_table_cmp_requeue]\tpr == %p, returning...\n", pr);
+		offload_send_syscall_result(idx, 0);
+		return 0;
+	}
+	// wake up all servers
+	struct Node *pnode = pr->head, *tmp;
+	int count_wake = 0;
+	int count_requeue = 0;
+	while (pnode)
+	{
+		fprintf(stderr, "[futex_table_cmp_requeue]\twaking up #%d\n", pnode->val);
+		offload_send_syscall_result(pnode->val, 0);
+		tmp = pnode;
+		pnode = pnode->next;
+		free(tmp);
+		count_wake++;
+		if (count_wake == val)
+			break;
+	}
+	// Clean up
+	if (pnode) //if val < number of waiters -> there is someone left, move to new queue
+	{
+		pr->head = pnode;
+		struct futex_record *dup = futex_table_find(uaddr2);
+		if (!dup) {
+			fprintf(stderr, "[futex_table_cmp_requeue]\treplacing futex_record of %p\n", uaddr);
+			pr->futex_addr = uaddr2;
+		}
+		// add to addr2 queue
+		else {
+			fprintf(stderr, "[futex_table_cmp_requeue]\tadding to new queue at %p\n", uaddr2);
+			struct Node *save, *begin, *end;
+			begin = pr->head;
+			pnode = begin;
+			while (pnode) {
+				count_requeue++;
+				if (count_requeue == val2)
+					break;
+				pnode = pnode->next;
+			}
+			end = pnode;
+			// move `begin to end` to dup
+			if (end->next == NULL) {
+				// there is nothing left at uaddr, clean up
+				pr->isInUse = 0;
+				pr->futex_addr = 0;
+				pr->head = NULL;
+			}
+			else {
+				pr->head = end->next;
+				end->next = dup->head;
+				dup->head = begin;
+			}
+
+		}
+	}
+	else // there is no one left, cleanup
+	{
+		// cleanup
+		pr->isInUse = 0;
+		pr->futex_addr = 0;
+		pr->head = NULL;
+	}
+	print_futex_table();
+	int res = count_wake > count_requeue ? count_wake : count_requeue;
+	offload_send_syscall_result(idx, res);
+	return res;
+}
+
 
 void syscall_daemonize(void)
 {
@@ -1664,8 +1708,29 @@ void syscall_daemonize(void)
 				arg1, arg2, arg3,
 				arg4, arg5, arg6);
 		fprintf(stderr, "[syscall_daemonize]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
-		//futex mark
 		// futex wait
+		/*       int futex(int *uaddr, int futex_op, int val,
+                 const struct timespec *timeout,   or: uint32_t val2
+				 int *uaddr2, int val3);
+				 arg1: uaddr, arg2: futex_op, arg3: val, 
+				 arg4: timeout/val2 ,arg5: uaddr2, arg6: val3.
+		*/
+		/*       FUTEX_WAIT (since Linux 2.6.0)
+              This operation tests that the value at the futex word pointed
+              to by the address uaddr still contains the expected value val,
+              and if so, then sleeps waiting for a FUTEX_WAKE operation on
+              the futex word.  The load of the value of the futex word is an
+              atomic memory access (i.e., using atomic machine instructions
+              of the respective architecture).  This load, the comparison
+              with the expected value, and starting to sleep are performed
+              atomically and totally ordered with respect to other futex
+              operations on the same futex word.  If the thread starts to
+              sleep, it is considered a waiter on this futex word.  If the
+              futex value does not match val, then the call fails
+              immediately with the error EAGAIN.
+
+              The arguments uaddr2 and val3 are ignored.
+		*/
 		if ((num == TARGET_NR_futex)
 			&& ((arg2 == (FUTEX_PRIVATE_FLAG|FUTEX_WAIT)) || (arg2 == FUTEX_WAIT)))
 		{
@@ -1681,13 +1746,25 @@ void syscall_daemonize(void)
 			else
 			{
 				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr)== != cmpval, ignoring...\n");
-				offload_send_syscall_result(idx, 0);
+				offload_send_syscall_result(idx, TARGET_EAGAIN);
 			}
-		}// futex_wake
+		}
+		// futex_wake
+		/*        FUTEX_WAKE (since Linux 2.6.0)
+              This operation wakes at most val of the waiters that are
+              waiting (e.g., inside FUTEX_WAIT) on the futex word at the
+              address uaddr.  Most commonly, val is specified as either 1
+              (wake up a single waiter) or INT_MAX (wake up all waiters).
+              No guarantee is provided about which waiters are awoken (e.g.,
+              a waiter with a higher scheduling priority is not guaranteed
+              to be awoken in preference to a waiter with a lower priority).
+
+              The arguments timeout, uaddr2, and val3 are ignored.
+		*/
 		else if ((num == TARGET_NR_futex)
 			&& ((arg2 == (FUTEX_PRIVATE_FLAG|FUTEX_WAKE)) || (arg2 == FUTEX_WAKE)))
 		{
-			fprintf(stderr, "[syscall_daemonize]\treceived FUTEX_PRIVATE_FLAG|FUTEX_WAKE, %p, %p, %d, arg8: %d\n", FUTEX_PRIVATE_FLAG|FUTEX_WAKE, arg2, arg2 == 0x81?1:0, arg8);
+			fprintf(stderr, "[syscall_daemonize]\treceived FUTEX_PRIVATE_FLAG|FUTEX_WAKE, %p, %p, %d, arg8: %d\n", FUTEX_PRIVATE_FLAG | FUTEX_WAKE, arg2, arg2 == 0x81 ? 1 : 0, arg8);
 			uint32_t futex_addr = arg1;
 			int wakeup_num = arg3;
 			int isChildEnd = arg8;
@@ -1698,8 +1775,19 @@ void syscall_daemonize(void)
 			}
 			futex_table_wake(futex_addr, wakeup_num, idx);
 		}
+		/*        FUTEX_CMP_REQUEUE (since Linux 2.6.7)
+		*/
+		else if ((num == TARGET_NR_futex)
+			&& ((arg2 == (FUTEX_PRIVATE_FLAG|FUTEX_CMP_REQUEUE)) || (arg2 ==FUTEX_CMP_REQUEUE)))
+		{
+			fprintf(stderr, "[syscall_daemonize]\treceived FUTEX_PRIVATE_FLAG|FUTEX_CMP_REQUEUE, %p, %p, %d, arg8: %d\n", FUTEX_PRIVATE_FLAG | FUTEX_WAKE, arg2, arg2 == 0x81 ? 1 : 0, arg8);
+			futex_table_cmp_requeue(arg1, arg2, arg3, arg4, arg5, arg6, idx);
+		}
 		else
 		{
+			if ((num == TARGET_NR_write)) {
+				fprintf(stderr, "[syscall_daemonize]\tfetching write, %d %c %d\n", arg1, *(char*)g2h(arg2), arg3);
+			}
 			extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 							abi_long arg2, abi_long arg3, abi_long arg4,
 							abi_long arg5, abi_long arg6, abi_long arg7,
@@ -1773,17 +1861,15 @@ void offload_client_start(CPUArchState *the_env)
 	//pthread_create(&daemonize,NULL,offload_client_daemonize,NULL);
 
 	/* send server its tid */
-	/*
+		/*
 	CPUState *cpu = ENV_GET_CPU((CPUArchState *)the_env);
 	TaskState *ts;
 	ts = cpu->opaque;
 	fprintf(stderr,"[offload_client_start]\tsending child_tidptr: %p\n", ts->child_tidptr);
 	*/
-	//offload_send_tid(offload_client_idx, ts->child_tidptr);
+		//offload_send_tid(offload_client_idx, ts->child_tidptr);
 
-
-
-	return;
+		return;
 }
 
 void offload_syscall_daemonize_start(CPUArchState *the_env)
@@ -2589,7 +2675,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
             p->life = PREFETCH_LIFE;
         } 
 		else {    // >=4 , launched
-			if (p->pref_count == 0) p->pref_count = 100;
+			if (p->pref_count == 0) p->pref_count = PREFETCH_BEGIN_PAGE_COUNT;
             else  p->pref_count *= 2;
 			ret = p->pref_count;
 			/* wait at next page */
@@ -2606,7 +2692,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		p->life = PREFETCH_LIFE;
 		p->wait_addr = page_addr + PAGE_SIZE;
 		pre->next = p;
-        fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\n", page_addr);
+        fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\nzhaoziyiniubi", page_addr);
 	}
 	show_prefetch_list(idx);
 	return ret;
