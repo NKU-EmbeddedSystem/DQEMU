@@ -155,20 +155,20 @@ struct pgft_record
 {
 	uint32_t page_addr;
 	uint32_t wait_addr;
+	uint32_t fetch_beg_addr;
 	int life;
 	int wait_hit_count;// for correctly pre
 	int pref_count;// how many is beging prefetching
 	int page_hit_count;// for conflicting pages
 	struct pgft_record *next;
+
 };
 
 static struct futex_record * futex_table;
 static struct pgft_record prefetch_table[MAX_WORKER];
 static int prefetch_handler(uint32_t page_addr, int idx);
+static int prefetch_check(uint32_t page_addr, int idx);
 static void show_prefetch_list(int idx);
-
-
-
 
 #include "set.h"
 #include "offload_common.h"
@@ -615,6 +615,7 @@ static int dump_self_maps(void)
 			}
 
 			fprintf(stderr, "memory region: %x to %x, host: %x to %x, %c%c%c\n", start, end, g2h(start), g2h(end), flag_r, flag_w, flag_x);
+			fprintf(stderr, "[DEBUGGG]\t%lx", g2h(8e568));
 			*(uint32_t *)p = start;
 			p += sizeof(uint32_t);
 
@@ -1134,8 +1135,22 @@ static void offload_process_page_request(void)
 	/*uint32_t got_flag = *(uint32_t *)p;
 	p += sizeof(uint32_t);*/
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
+	/* Check if already in prefetch list */
+	int isInPrefetch = prefetch_check(page_addr, offload_client_idx);
+	if (isInPrefetch<0)
+	{
+		sleep(0.5);
+	}
 	offload_client_fetch_page(offload_client_idx, page_addr, perm);
+	if (isInPrefetch < 0)
+	{
+		fprintf(stderr, "[offload_process_page_request client#%d]\tIn list, prefetch stops\n", offload_client_idx);
+		return;
+	}
 	int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
+	/* limit the prefetch count to avoid too much thread at a time */
+	//prefetch_count = prefetch_count > 100 ? 100 : prefetch_count;
+	
 	if (prefetch_count > 0) {
 		fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
 		for (int i = 0; i < prefetch_count; i++) {
@@ -1400,6 +1415,7 @@ static void futex_table_add(uint32_t futex_addr, int idx)
 	memset(p, 0, sizeof(struct Node));
 	p->val = idx;
 	int i = 0;
+	int j = 0;
 	fprintf(stderr, "[futex_table_add]\ttest point1\n");
 	// find a
 	while ((futex_table[i].isInUse) && (futex_table[i].futex_addr != futex_addr))
@@ -1411,25 +1427,28 @@ static void futex_table_add(uint32_t futex_addr, int idx)
 			exit(-1);
 		}
 	}
-	fprintf(stderr, "[futex_table_add]\ttest point2\n");
+
+	// if the former record has been cleaned
+	for (; j < FUTEX_RECORD_MAX; j++)
+	{
+		if ((futex_table[j].isInUse==1)&&(futex_table[j].futex_addr==futex_addr))
+			break;
+	}
+	if (j != FUTEX_RECORD_MAX)
+		i = j;
 	// make sure list is not full
 
-	fprintf(stderr, "[futex_table_add]\ttest point3\n");
 	// insert
 	if (futex_table[i].isInUse != 1)
 	{
 		futex_table[i].isInUse = 1;
 		futex_table[i].futex_addr = futex_addr;
-		fprintf(stderr, "[futex_table_add]\ttest point3.1\n");
 		futex_table[i].head = p;
-		fprintf(stderr, "[futex_table_add]\ttest point3.11\n");
 	}
 	else
 	{
 		p->next = futex_table[i].head;
-		fprintf(stderr, "[futex_table_add]\ttest point3.2\n");
 		futex_table[i].head = p;
-		fprintf(stderr, "[futex_table_add]\ttest point3.21\n");
 	}
 
 	// wakeup all??
@@ -1453,7 +1472,6 @@ static void print_futex_table()
 		//fprintf(stderr, "[print_futex_table]\ttest point2\n");
 		if (p->isInUse)
 		{
-			fprintf(stderr, "[print_futex_table]\ttest point3, head= %p\n", p->head);
 			pnode = p->head;
 			//fprintf(stderr, "[print_futex_table]\ttest point3.1, val = %d, next\n", pnode->val);
 			while (pnode)
@@ -1509,11 +1527,14 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx)
 	int count = 0;
 	while (pnode)
 	{
-		offload_send_syscall_result(pnode->val, 0);
+		// wasn't woken up by timer
+		if (pnode->val>=0) {
+			count++;
+			offload_send_syscall_result(pnode->val, 0);
+		}
 		tmp = pnode;
 		pnode = pnode->next;
 		free(tmp);
-		count++;
 		if (count == num) break;
 	}
 	// Clean up
@@ -1589,11 +1610,15 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 	while (pnode)
 	{
 		fprintf(stderr, "[futex_table_cmp_requeue]\twaking up #%d\n", pnode->val);
-		offload_send_syscall_result(pnode->val, 0);
+		// wasn't woken up by timer
+		if (pnode->val >= 0)
+		{
+			count_wake++;
+			offload_send_syscall_result(pnode->val, 0);
+		}
 		tmp = pnode;
 		pnode = pnode->next;
 		free(tmp);
-		count_wake++;
 		if (count_wake == val)
 			break;
 	}
@@ -1645,6 +1670,12 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 	int res = count_wake > count_requeue ? count_wake : count_requeue;
 	offload_send_syscall_result(idx, res);
 	return res;
+}
+
+/* Set a timer to wake up Futex_waiter */
+void* futex_timer(const struct timespec * timeout, void* p)
+{
+
 }
 
 
@@ -1729,6 +1760,15 @@ void syscall_daemonize(void)
               futex value does not match val, then the call fails
               immediately with the error EAGAIN.
 
+				If the timeout is not NULL, the structure it points to
+              specifies a timeout for the wait.  (This interval will be
+              rounded up to the system clock granularity, and is guaranteed
+              not to expire early.)  The timeout is by default measured
+              according to the CLOCK_MONOTONIC clock, but, since Linux 4.5,
+              the CLOCK_REALTIME clock can be selected by specifying
+              FUTEX_CLOCK_REALTIME in futex_op.  If timeout is NULL, the
+              call blocks indefinitely.
+
               The arguments uaddr2 and val3 are ignored.
 		*/
 		if ((num == TARGET_NR_futex)
@@ -1742,10 +1782,17 @@ void syscall_daemonize(void)
 			{
 				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr) == cmpval, adding to futex table\n");
 				futex_table_add(futex_addr, idx);
+				// // DEBUG
+				// sleep(1);
+				// offload_send_syscall_result(idx, 0);
+				if (arg4 != NULL) {
+					fprintf(stderr, "[syscall_daemonize]\ttime FUTEX_WAIT not implemented!\n");
+					exit(-1);
+				}
 			}
 			else
 			{
-				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr)== != cmpval, ignoring...\n");
+				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr = %p)!= cmpval = %p, ignoring...\n", *(int *)(g2h(futex_addr)), cmpval);
 				offload_send_syscall_result(idx, TARGET_EAGAIN);
 			}
 		}
@@ -2611,12 +2658,37 @@ static void show_prefetch_list(int idx)
 	fprintf(stderr, "[show_prefetch_list]\tShowing for %d\n", idx);
     struct pgft_record *p = &prefetch_table[idx];	//pagefault node
 	while (p) {
-		fprintf(stderr, "page_addr %p\t|life %d\t|wait_addr %p\t|wait_hit_count %d\t|page_hit_count %d\t|pref_count %d|\n",
-				p->page_addr, p->life, p->wait_addr, p->wait_hit_count, p->page_hit_count, p->pref_count);
+		fprintf(stderr, "page_addr %p\t|life %d\t|wait_addr %p\t|wait_hit_count %d\t|page_hit_count %d\t|pref_count %d|pref_beg_addr %p\n",
+				p->page_addr, p->life, p->wait_addr, p->wait_hit_count, p->page_hit_count, p->pref_count, p->fetch_beg_addr);
 		p = p->next;
 	}
 }
 
+/* check if page_addr already in prefetching 
+ * if so, return -1
+ * else return 0
+ */
+static int prefetch_check(uint32_t page_addr, int idx)
+{
+	fprintf(stderr, "[prefetch_check]\tchecking..page_addr %p\n", page_addr);
+	show_prefetch_list(idx);
+	struct pgft_record *p = prefetch_table[idx].next; //pagefault node
+	uint32_t beg, end;
+	int i = 0;
+	while (p)
+	{
+		beg = p->fetch_beg_addr;
+		end = beg + p->pref_count * 0x1000;
+		if ((page_addr>=beg) && (page_addr<=end)){
+			fprintf(stderr, "[prefetch_check]\talready in list, pos: %d\n", i);
+			
+			return -1;
+		}
+		i++;
+		p = p->next;
+	}
+	return 0;
+}
 // for prefetch page for server
 //TODO weight how much does this cost
 //TODO exclusive send test & how much would it cost(mutex)
@@ -2677,10 +2749,13 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		else {    // >=4 , launched
 			if (p->pref_count == 0) p->pref_count = PREFETCH_BEGIN_PAGE_COUNT;
             else  p->pref_count *= 2;
+			if (p->pref_count > PREFETCH_PAGE_MAX)
+				p->pref_count = PREFETCH_PAGE_MAX;
 			ret = p->pref_count;
 			/* wait at next page */
             p->wait_addr = page_addr + (p->pref_count + 1)*PAGE_SIZE;
-            fprintf(stderr, "[prefetch_handler]\tPrefetching for %p for %d pages, waiting at %p\n", page_addr, p->pref_count, p->wait_addr);
+			p->fetch_beg_addr = page_addr;
+			fprintf(stderr, "[prefetch_handler]\tPrefetching for %p for %d pages, waiting at %p\n", page_addr, p->pref_count, p->wait_addr);
 		}
 
 	}
@@ -2692,7 +2767,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		p->life = PREFETCH_LIFE;
 		p->wait_addr = page_addr + PAGE_SIZE;
 		pre->next = p;
-        fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\nzhaoziyiniubi", page_addr);
+        fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\n", page_addr);
 	}
 	show_prefetch_list(idx);
 	return ret;

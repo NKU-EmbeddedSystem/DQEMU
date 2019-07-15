@@ -631,7 +631,8 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 
 
     int is_write = ((uc->uc_mcontext.gregs[REG_ERR] & 0x2) != 0);
-    
+	//TODO !!!!!!!!!!!!!!!DEBUG
+	//is_write = 1;
 	fprintf(stderr, "[offload_segfault_handler]\tsegfault on page addr: %x, perm: %s\n", page_addr, is_write?"WRITE|READ":"READ");
 	// sum time on pagefault
 	
@@ -663,6 +664,7 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 		pthread_mutex_lock(&page_syscall_recv_mutex);
 		page_syscall_recv_flag = 0;
 		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
+		//offload_server_send_page_request(page_addr, 2);
 		fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
 		while (page_syscall_recv_flag == 0)
 		{
