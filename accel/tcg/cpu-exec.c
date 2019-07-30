@@ -171,6 +171,7 @@ static inline tcg_target_ulong cpu_tb_exec(CPUState *cpu, TranslationBlock *itb)
     cpu->can_do_io = !use_icount;
 	//fprintf(stderr, "111\n");
     ret = tcg_qemu_tb_exec(env, tb_ptr);
+
     //fprintf(stderr, "222\n");
 	cpu->can_do_io = 1;
 	//fprintf(stderr, "333\n");
@@ -619,6 +620,7 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 
     trace_exec_tb(tb, tb->pc);
     ret = cpu_tb_exec(cpu, tb);
+
     tb = (TranslationBlock *)(ret & ~TB_EXIT_MASK);
     *tb_exit = ret & TB_EXIT_MASK;
     if (*tb_exit != TB_EXIT_REQUESTED) {
@@ -660,7 +662,7 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 }
 extern int offload_mode;
 /* main execution loop */
-
+extern TCGv_i64 cpu_exclusive_val;//Debug use
 int cpu_exec(CPUState *cpu)
 {
     CPUClass *cc = CPU_GET_CLASS(cpu);
@@ -731,28 +733,29 @@ int cpu_exec(CPUState *cpu)
 			//extern void offload_log(FILE*, const char*, ...);
 			offload_log(stderr, "exec code from %x to %x\n", tb->pc, tb->pc + tb->size);
 
-#if 0
-			if (tb->pc == 0x27954)
+#if 1
+            // Debug 
+			if (tb->pc == 0x127c0|| tb->pc == 0x127b6)
 			{
-				/*uint32_t tmp[1];
-				cpu_memory_rw_debug(cpu, 0x10324, tmp, 4, 1);
-				fprintf(stderr, "[0x10324]: %x %x\n", tmp[0], *((uint32_t *) 0x3c01f324));*/
-				//fprintf(stderr, "at start of thread func:\n");
-				disas(stderr, tb->tc.ptr, tb->tc.size);
+				//int32_t tmp[1];
+				//cpu_memory_rw_debug(cpu, 0x10324, tmp, 4, 1);
+				//fprintf(stderr, "[0x10324]: %x %x\n", tmp[0], *((uint32_t *) 0x3c01f324));*/
+				fprintf(stderr, "Debug try lock tb->pc %p\n", tb->pc);
+               
+
+                disas(stderr, tb->tc.ptr, tb->tc.size);
 				//fprintf(stderr, "r4: %x\n", ((CPUArchState *)cpu->env_ptr)->regs[4]);
 			}
-			if (tb->pc == 0x102fa && offload_mode == 1)
-			{
-				;
-				fprintf(stderr, "count: %d\n", *((uint32_t *) 0x3c089e34));
-				/*mprotect(guest_base + 0x7ae34, 0x1000, PROT_READ);
-				fprintf(stderr, "count: %d\n", *((uint32_t *) guest_base + 0x7ae34));*/
-			}
+			// if (tb->pc == 0x102fa && offload_mode == 1)
+			// {
+			// 	;
+			// 	fprintf(stderr, "count: %d\n", *((uint32_t *) 0x3c089e34));
+			// 	/*mprotect(guest_base + 0x7ae34, 0x1000, PROT_READ);
+			// 	fprintf(stderr, "count: %d\n", *((uint32_t *) guest_base + 0x7ae34));*/
+			// }
 			
 #endif
             cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit);
-			
-			
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(&sc, cpu);

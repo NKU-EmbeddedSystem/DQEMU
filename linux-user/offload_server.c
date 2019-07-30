@@ -50,8 +50,8 @@ static void offload_server_process_futex_wait_result(void);
 static void offload_server_send_futex_wait_request(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 int offload_server_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_send_page_request(target_ulong page_addr, uint32_t perm);
-
-void offload_server_send_mutex_request(uint32_t mutex_addr);
+int offload_segfault_handler_positive(uint32_t page_addr, int perm);
+void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t, uint32_t, uint32_t);
 static void offload_process_page_request(void);
 static void offload_process_page_content(void);
 static void offload_send_page_content(target_ulong page_addr, uint32_t perm,int);
@@ -61,8 +61,8 @@ static void offload_process_page_perm(void);
 void offload_server_start(void);
 void* offload_center_server_start(void*);
 static void offload_server_process_futex_wake_result(void);
-void offload_server_send_cmpxchg_start(uint32_t);
-void offload_server_send_cmpxchg_end(uint32_t);
+void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
+void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
 extern void offload_server_qemu_init(void);
 abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
                     abi_long arg2, abi_long arg3, abi_long arg4,
@@ -79,11 +79,15 @@ static int page_syscall_recv_flag; static pthread_mutex_t page_syscall_recv_mute
 static int mutex_ready_flag; static pthread_mutex_t mutex_recv_mutex; static pthread_cond_t mutex_recv_cond;
 static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread_cond_t exit_recv_cond;
 static int syscall_ready_flag; static pthread_mutex_t syscall_recv_mutex; static pthread_cond_t syscall_recv_cond;
+int syscall_clone_done;
+pthread_mutex_t syscall_clone_mutex;
+pthread_cond_t syscall_clone_cond;
 static int futex_uaddr_changed_flag; static pthread_mutex_t futex_mutex; static pthread_cond_t futex_cond;
 static void* exec_segfault_addr; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
 static int syscall_time_sum;
 abi_long result_global;
+
 
 /* get packet_counter of net_buffer */
 static uint32_t get_number(void)
@@ -362,7 +366,7 @@ void * cpu_killer(void* param)
 	}	
 	pthread_mutex_unlock(&exit_recv_mutex);	
 	fprintf(stderr, "[cpu_killer]\tTerminiting exec_cpu...:\n");
-	pthread_kill(exec_thread,NULL);
+	//pthread_kill(exec_thread,NULL);
 	return NULL;
 }
 
@@ -384,7 +388,7 @@ static void offload_process_start(void)
 
 /* send mutex request in order to fetch a free lock 
 	|MUTEX_REQUEST|mutex_addr|					*/
-void offload_server_send_mutex_request(uint32_t mutex_addr)
+void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint32_t newv, uint32_t strv)
 {
 	//!!!
 	//mutex_addr = h2g(mutex_addr);
@@ -395,9 +399,15 @@ void offload_server_send_mutex_request(uint32_t mutex_addr)
 	pp += sizeof(target_ulong);
 	*((uint32_t *)pp) = (uint32_t) offload_server_idx;
 	pp += sizeof(uint32_t);
+	*((uint32_t *)pp) = cmpv;
+	pp += sizeof(uint32_t);
+	*((uint32_t *)pp) = newv;
+	pp += sizeof(uint32_t);
+	*((uint32_t *)pp) = strv;
+	pp += sizeof(uint32_t);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_REQUEST);
-	/* we should lock first in case verified returns before we lock!!!!!! */
+	/* we should lock first in case verified returns before we sleep!!!!!! */
 	pthread_mutex_lock(&mutex_recv_mutex);
 	
 	int res = autoSend(client_socket, buf, pp - buf, 0);
@@ -406,7 +416,8 @@ void offload_server_send_mutex_request(uint32_t mutex_addr)
 		fprintf(stderr, "[cmpxchg_request]\tsent mutex request %p failed\n", mutex_addr);
 		exit(0);
 	}
-	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...offload_server_idx=%d\n", mutex_addr, get_number(),offload_server_idx);
+	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...offload_server_idx=%d\n", mutex_addr, get_number(), offload_server_idx);
+	fprintf(stderr, "[cmpxchg_request]\tcas addr %p, idx %d, cmpv %x, newv %x, strv %x\n", mutex_addr, offload_server_idx, cmpv, newv, strv);
 	mutex_ready_flag = 0;
 	while (mutex_ready_flag == 0)
 	{
@@ -425,7 +436,7 @@ static void offload_server_process_mutex_verified(void)
 	mutex_ready_flag = 1;
 	pthread_cond_signal(&mutex_recv_cond);
 	pthread_mutex_unlock(&mutex_recv_mutex);
-	if (mutex_ready_flag == 0) offload_server_process_mutex_verified();
+	//if (mutex_ready_flag == 0) offload_server_process_mutex_verified();
 }
 
 /* send page request |REQUEST|page_addr|perm| */
@@ -474,6 +485,17 @@ static void offload_process_page_request(void)
 	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d, from %d, for %d\n", page_addr, perm, client_idx, forwho);
 	// when debug, erase this.
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
+	if (page_addr == 0x78000)
+	{
+		fprintf(stderr, "[offload_process_page_request]\tdebug\t0x78f4c = %d", *(int *)(g2h(0x78f4c)));
+	}
+	/* debug pthread_mutex_struct */
+	if (page_addr == 0x78000)
+	{
+		fprintf(stderr, "[offload_process_page_request]\tdebug\t__lock0x77f34 = %d", *(int *)(g2h(0x78f34)));
+		fprintf(stderr, "[offload_process_page_request]\tdebug\t__count0x77f38 = %d", *(int *)(g2h(0x78f38)));
+		fprintf(stderr, "[offload_process_page_request]\tdebug\t__owner0x77f40 = %d", *(int *)(g2h(0x78f3C)));
+	}
 	offload_send_page_content(page_addr, perm, forwho);
 	fprintf(stderr, "[offload_process_page_request]\tsent content\n", page_addr, perm);
 	/*	if required permission is WRITE|READ,
@@ -508,9 +530,17 @@ static void offload_process_page_content(void)
 	uint32_t perm = *((uint32_t *) p);
 	p += sizeof(uint32_t);
 	fprintf(stderr, "[offload_process_page_content]\tcontent: %d %d\n", *((uint64_t *) p), *((uint64_t *) p + 555));
+
 	/* protect page and copy content to page */
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
 	memcpy(g2h(page_addr), p, TARGET_PAGE_SIZE);
+	/* debug pthread_mutex_t */
+	if (page_addr == 0x78000)
+	{
+		fprintf(stderr, "[offload_process_page_content]\tdebug\t__lock0x77f34 = %d", *(int *)(g2h(0x78f34)));
+		fprintf(stderr, "[offload_process_page_content]\tdebug\t__count0x77f38 = %d", *(int *)(g2h(0x78f38)));
+		fprintf(stderr, "[offload_process_page_content]\tdebug\t__owner0x77f40 = %d", *(int *)(g2h(0x78f3C)));
+	}
 	p += TARGET_PAGE_SIZE;
 	if (perm == 2)
 	{
@@ -673,7 +703,7 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 		fprintf(stderr, "[offload_segfault_handler]\tsyscall segfault awake\n");
 	}
-
+	//fprintf(stderr, "[offload_segfault_handler]\t%p value is %d\n", guest_addr, *(uint32_t*)(g2h(guest_addr)));
 	ftime(&tend);
 	int secDiff = tend.time - t.time;
 	secDiff *= 1000;
@@ -683,7 +713,65 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 
     return 1;
 }
+/* send page request; sleep until page is sent back */
+int offload_segfault_handler_positive(uint32_t page_addr, int perm)
+{
+	struct timeb t, tend;
+	ftime(&t);
+	page_addr &= TARGET_PAGE_MASK;
+	fprintf(stderr, "[offload_segfault_handler_positive]\tguest addr is %p\n",
+			page_addr);
 
+
+	int is_write = perm - 1;
+	//TODO !!!!!!!!!!!!!!!DEBUG
+	//is_write = 1;
+	fprintf(stderr, "[offload_segfault_handler_positive]\tsegfault on page addr: %x, perm: %s\n", page_addr, is_write ? "WRITE|READ" : "READ");
+
+
+	if (offload_mode != 4)
+	{
+		exec_segfault_addr = page_addr;
+		pthread_mutex_lock(&page_recv_mutex);
+		page_recv_flag = 0;
+		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
+		fprintf(stderr, "[offload_segfault_handler_positive]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		//TODO check if
+		while (page_recv_flag == 0)
+		{
+			pthread_cond_wait(&page_recv_cond, &page_recv_mutex);
+		}
+		pthread_mutex_unlock(&page_recv_mutex);
+
+		fprintf(stderr, "[offload_segfault_handler_positive]\tawake\n");
+	}
+	/* for syscall#0's segfault */
+	else
+	{
+		syscall_segfault_addr = page_addr;
+		fprintf(stderr, "[offload_segfault_handler_positive]\tin syscall segfault\n");
+		pthread_mutex_lock(&page_syscall_recv_mutex);
+		page_syscall_recv_flag = 0;
+		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
+		//offload_server_send_page_request(page_addr, 2);
+		fprintf(stderr, "[offload_segfault_handler_positive]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		while (page_syscall_recv_flag == 0)
+		{
+			pthread_cond_wait(&page_syscall_recv_cond, &page_syscall_recv_mutex);
+		}
+		pthread_mutex_unlock(&page_syscall_recv_mutex);
+		fprintf(stderr, "[offload_segfault_handler_positive]\tsyscall segfault awake\n");
+	}
+	fprintf(stderr, "[offload_segfault_handler_positive]\t%p value is %d\n", page_addr, *(uint32_t *)(g2h(page_addr)));
+	ftime(&tend);
+	int secDiff = tend.time - t.time;
+	secDiff *= 1000;
+	secDiff += (tend.millitm - t.millitm);
+	pgfault_time_sum += secDiff;
+	fprintf(stderr, "[offload_segfault_handler_positive]\tbegin: %d:%d; end: %d:%d, used: %dms, now total is: %dms", t.time, t.millitm, tend.time, tend.millitm, secDiff, pgfault_time_sum);
+
+	return 1;
+}
 /* change permission of page_addr */
 static void offload_process_page_perm(void)
 {
@@ -729,11 +817,28 @@ static void offload_process_page_upgrade(void)
 	else if(perm == 0)
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_NONE);
 	
-	pthread_mutex_lock(&page_recv_mutex);
-	page_recv_flag = 1;
-	pthread_cond_signal(&page_recv_cond);
-	pthread_mutex_unlock(&page_recv_mutex);
-
+	// pthread_mutex_lock(&page_recv_mutex);
+	// page_recv_flag = 1;
+	// pthread_cond_signal(&page_recv_cond);
+	// pthread_mutex_unlock(&page_recv_mutex);
+	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x perm: %s\n", page_addr, perm == 1 ? "READ" : "WRITE|READ");
+	// wake up the execution thread upon this required page.
+	if (page_addr == exec_segfault_addr)
+	{
+		fprintf(stderr, "[offload_process_page_upgrade]\twaking up exec\n");
+		pthread_mutex_lock(&page_recv_mutex);
+		page_recv_flag = 1;
+		pthread_cond_broadcast(&page_recv_cond);
+		pthread_mutex_unlock(&page_recv_mutex);
+	}
+	if (page_addr == syscall_segfault_addr)
+	{
+		fprintf(stderr, "[offload_process_page_upgrade]\twaking up syscall\n");
+		pthread_mutex_lock(&page_syscall_recv_mutex);
+		page_syscall_recv_flag = 1;
+		pthread_cond_broadcast(&page_syscall_recv_cond);
+		pthread_mutex_unlock(&page_syscall_recv_mutex);
+	}
 	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x upgrade to %d\n", page_addr, perm);
 	if (perm > 0)
 	{
@@ -883,23 +988,24 @@ void offload_server_start(void)
 	
 }
 
-void offload_server_send_cmpxchg_start(uint32_t page_addr)
+void offload_server_send_cmpxchg_start(uint32_t cas_addr, uint32_t cmpv, uint32_t newv, uint32_t strv)
 {
-	offload_server_send_mutex_request(page_addr);
+	offload_server_send_mutex_request(cas_addr, cmpv, newv, strv);
 }
 
 /* send |MUTEX_DONE|mutex_addr|idx| */
-static void offload_send_mutex_done(uint32_t mutex_addr)
+static void offload_send_mutex_done(uint32_t mutex_addr, uint32_t nowv)
 {
 	//pthread_mutex_lock(&socket_mutex);
 	/* prepare space for head */
 	//p = BUFFER_PAYLOAD_P;
 	char buf[TARGET_PAGE_SIZE * 2];
 	char *p = buf + sizeof(struct tcp_msg_header);
-	/* fill addr and perm */
 	*((uint32_t *) p) = mutex_addr;
     p += sizeof(uint32_t);
 	*((uint32_t *) p) = offload_server_idx;
+	p += sizeof(uint32_t);
+	*((uint32_t *)p) = nowv;
 	p += sizeof(uint32_t);
 	/* fill head, tag = MUTEX_DONE */
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
@@ -910,43 +1016,15 @@ static void offload_send_mutex_done(uint32_t mutex_addr)
 		fprintf(stderr, "[offload_send_mutex_done]\tsent mutex %p done failed\n", mutex_addr);
 		exit(0);
 	}
-	fprintf(stderr, "[offload_send_mutex_done]\tsent mutex %p done from server #%d\n", mutex_addr, offload_server_idx);
+	fprintf(stderr, "[offload_send_mutex_done]\tsent mutex %p done, nowv %x from server #%d\n", mutex_addr, nowv, offload_server_idx);
 	//pthread_mutex_unlock(&socket_mutex);
 }
 
-void offload_server_send_cmpxchg_end(uint32_t page_addr)
+void offload_server_send_cmpxchg_end(uint32_t cas_addr, uint32_t nowv)
 {
-	offload_send_mutex_done(page_addr);
-	page_addr &= ~0xfff;
+	offload_send_mutex_done(cas_addr, nowv);
 }
 
-/*
-//try to receive exactly length bytes
-static void try_recv(int length)
-{
-
-	//fprintf(stderr, "trying recv size of %d, skt: %d\n", length, client_socket);
-	int res = recv(client_socket, net_buffer, length, MSG_WAITALL);
-	//int res = recv(client_socket, net_buffer, length, 0);
-	if (res == length)
-	{
-		return;
-	}
-	else if (res < 0)
-	{
-		fprintf(stderr, "[try_recv]\trecv failed: errno: %d\n", errno);
-	}
-	else if (res == 0)
-	{
-		fprintf(stderr, "[try_recv]\tconnection closed. I've done my job. Exiting peacefully...\n");
-	}
-	else if (res != length)
-	{
-		fprintf(stderr, "[try_recv]\trecv failed: shorter than expected\n");
-	}
-	exit(0);
-}
-*/
 static void offload_server_send_futex_wake_request(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3)
 {
 	p = BUFFER_PAYLOAD_P;
@@ -1164,7 +1242,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	secDiff += (tend.millitm - t.millitm);
 	syscall_time_sum += secDiff;
 	fprintf(stderr, "[pass_syscall]\tbegin: %d:%d; end: %d:%d, used: %dms, now total is: %dms", t.time, t.millitm, tend.time, tend.millitm, secDiff, syscall_time_sum);
-
+	fprintf(stderr, "[pass_syscall]\returning result %p!\n", result);
 	return result;
 
 }

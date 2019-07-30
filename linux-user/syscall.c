@@ -6375,7 +6375,9 @@ typedef struct {
 extern void offload_client_start(CPUArchState*);
 extern void offload_syscall_daemonize_start(CPUArchState*);
 extern __thread int offload_client_idx;
-
+extern pthread_mutex_t syscall_clone_mutex;
+extern pthread_cond_t syscall_clone_cond;
+extern int syscall_clone_done;
 static void *clone_func_syscall(void *arg)
 {
     new_thread_info *info = arg;
@@ -6393,9 +6395,13 @@ static void *clone_func_syscall(void *arg)
 	fprintf(stderr, "[clone_func_syscall]\tpoint1\n");
 	fprintf(stderr, "[clone_func_syscall]\tsyscall #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
     TaskState* new_opaque = (TaskState*)malloc(sizeof(TaskState));
+    fprintf(stderr, "[clone_func_syscall]\tpoint1.1\n");
     *new_opaque = *((TaskState*)cpu->opaque);
+    fprintf(stderr, "[clone_func_syscall]\tpoint1.2\n");
     cpu->opaque = new_opaque;
+    fprintf(stderr, "[clone_func_syscall]\tpoint1.3\n");
     ts = (TaskState *)cpu->opaque;
+    fprintf(stderr, "[clone_func_syscall]\tpoint1.4\n");
     info->tid = gettid();
     fprintf(stderr, "[clone_func_syscall]\t[task_settid]\n");
     task_settid(ts);
@@ -6410,12 +6416,14 @@ static void *clone_func_syscall(void *arg)
 	fprintf(stderr, "[clone_func_syscall]\t[sigprocmask]\n");
     sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
 	fprintf(stderr, "[clone_func_syscall]\tpoint2\n");
-    /* Signal to the parent that we're ready.  */
-    /*
-    pthread_mutex_lock(&info->mutex);
-    pthread_cond_broadcast(&info->cond);
-    pthread_mutex_unlock(&info->mutex);
-    */
+    
+    /* Signal to the clone thread that we're ready.  */
+    
+    pthread_mutex_lock(&syscall_clone_mutex);
+    syscall_clone_done = 1;
+    pthread_cond_broadcast(&syscall_clone_cond);
+    pthread_mutex_unlock(&syscall_clone_mutex);
+    
     fprintf(stderr, "[clone_func_syscall]\tpoint2.5\n");
     /* Wait until the parent has finished initializing the tls state.  */
     pthread_mutex_lock(&clone_lock);
@@ -6457,6 +6465,14 @@ static void *clone_func(void *arg)
     //cpu_loop(env);
 
     offload_client_start(info->env);
+    /* Wait untill syscall thread is ready. */
+
+    pthread_mutex_lock(&syscall_clone_mutex);
+	while (syscall_clone_done == 0)
+	{
+		pthread_cond_wait(&syscall_clone_cond, &syscall_clone_mutex);
+	}
+	pthread_mutex_unlock(&syscall_clone_mutex);
     /* Signal to the parent that we're ready.  */
     pthread_mutex_lock(&info->mutex);
     pthread_cond_broadcast(&info->cond);
@@ -6571,6 +6587,9 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         pthread_mutex_init(&info.mutex, NULL);
         pthread_mutex_lock(&info.mutex);
         pthread_cond_init(&info.cond, NULL);
+        pthread_mutex_init(&syscall_clone_mutex, NULL);
+        pthread_cond_init(&syscall_clone_cond, NULL);
+        syscall_clone_done = 0;
         info.env = new_env;
         if (flags & CLONE_CHILD_SETTID) {
             info.child_tidptr = child_tidptr;
@@ -6603,9 +6622,17 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         static int is_first = 1;
         if (is_first)
         {
-            ret = pthread_create(&info.thread, &attr, clone_func_syscall, &info);
+            pthread_t syscall_init;
+            ret = pthread_create(&syscall_init, &attr, clone_func_syscall, &info);
+            //pthread_join(syscall_init, NULL);
             offload_log(stderr, "[do_fork]\pthread_create syscall_daemonize res: %d\n", ret);
             is_first = 0;
+        }
+        else {
+            pthread_mutex_lock(&syscall_clone_mutex);
+            syscall_clone_done = 1;
+            pthread_cond_broadcast(&syscall_clone_cond);
+            pthread_mutex_unlock(&syscall_clone_mutex);
         }
 
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
@@ -7483,8 +7510,6 @@ static inline abi_long host_to_target_stat64(void *cpu_env,
 #include <unistd.h>
 #include <sys/syscall.h> 
 extern void print_holder(uint32_t page_addr);
-extern int offload_server_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
-extern int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 
 extern void offload_client_lock_page(target_ulong addr);
 extern void offload_client_unlock_page(target_ulong addr);
@@ -7493,57 +7518,6 @@ extern void offload_client_unlock_page(target_ulong addr);
 //extern void offload_client_futex_prelude(target_ulong page_addr);
 
 
-int offload_client_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3)
-{
-	target_ulong uaddr_page = (uaddr >> 12) << 12;
-	fprintf(stderr, "futex wait guest addr: %x, host addr: %x\n", uaddr, g2h(uaddr));
-	print_holder(uaddr_page);
-	/*int res = mprotect(g2h(uaddr_page), (unsigned int) (0x1000), PROT_READ | PROT_WRITE | PROT_EXEC | 0x8);
-	fprintf(stderr, "mprotect result: %d, errno: %d, EINVAL: %d\n", res, errno, EINVAL);*/
-	
-	uint32_t vf = *((uint32_t *) g2h(uaddr));
-	fprintf(stderr, "test: %d\n", vf);
-	struct timespec ts, *pts;
-	if (timeout) {
-		pts = &ts;
-		target_to_host_timespec(pts, timeout);
-	} else {
-		pts = NULL;
-	}
-	
-	/*
-#ifdef HAVE_SAFE_SYSCALL
-	
-	fprintf(stderr, "HAVE SAFE SYSCALL\n");
-#else
-	fprintf(stder,, "HAVE NO SAFE SYSCALL");
-#endif
-*/
-	//res = futex(g2h(uaddr), op, val, timeout, uaddr2, val3);
-	
-	/* test */
-	int res = syscall(SYS_futex , g2h(uaddr), op, val, timeout, uaddr2, val3);
-	return get_errno(res);
-	//return res;
-	//return get_errno(safe_futex(g2h(uaddr), op, tswap32(val), pts, NULL, val3));
-}
-int offload_client_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3)
-{
-	fprintf(stderr, "futex wake guest addr: %x, host addr: %x\n", uaddr, g2h(uaddr));
-	print_holder(uaddr);
-	int res;
-	struct timespec ts, *pts;
-	if (timeout) {
-		pts = &ts;
-		target_to_host_timespec(pts, timeout);
-	} else {
-		pts = NULL;
-	}
-	//res = futex(g2h(uaddr), op, val, timeout, uaddr2, val3);
-	res = syscall(SYS_futex , g2h(uaddr), op, val, timeout, uaddr2, val3);
-	return get_errno(res);
-	//return get_errno(safe_futex(g2h(uaddr), op, val, NULL, NULL, 0));
-}
 
 /* ??? Using host futex calls even when target atomic operations
    are not really atomic probably breaks things.  However implementing
@@ -8321,7 +8295,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         fprintf(stderr,"[exit]\tNOW child_tidptr value: %p\n", *(uint32_t*)g2h(ts->child_tidptr));
         if (ts->child_tidptr) {
             
-            //*(uint32_t*)g2h(ts->child_tidptr) = 0;
+            //*(uint32_t*)(g2h(ts->child_tidptr)) = 0;
             //put_user_u32(0, ts->child_tidptr);
             extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
                                                         abi_long arg2, abi_long arg3, abi_long arg4,
@@ -8345,7 +8319,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         extern void cpu_exit_signal(void);
         cpu_exit_signal();
         //fprintf(stderr,"CAN U SEE ME?\n");
-        while (1) ;
+        pthread_exit(0);
+        while (1)
+            ;
         return NULL;
         ret = 0; /* avoid warning */
         break;
@@ -12459,8 +12435,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                                                         abi_long arg2, abi_long arg3, abi_long arg4,
                                                         abi_long arg5, abi_long arg6, abi_long arg7,
                                                         abi_long arg8);
-            pass_syscall(cpu_env,TARGET_NR_futex,arg1, arg2, arg3,
+            ret = pass_syscall(cpu_env,TARGET_NR_futex,arg1, arg2, arg3,
                         arg4, arg5, arg6, 0, 0);
+
 
         }
         else

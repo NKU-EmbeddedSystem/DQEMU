@@ -8250,9 +8250,9 @@ case 3: /* ldrexh */
 static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
                                TCGv_i32 addr, int size)
 {
-	
-	
-	fprintf(stderr, "gen_load_exclusive, size: %d\n", size);
+
+    fprintf(stderr, "gen_load_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
+    tcg_gen_ldex(addr);
     TCGv_i32 tmp = tcg_temp_new_i32();
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
 
@@ -8303,6 +8303,7 @@ static void gen_clrex(DisasContext *s)
 static void gen_store_exclusive(DisasContext *s, int rd, int rt, int rt2,
                                 TCGv_i32 addr, int size)
 {
+    fprintf(stderr, "gen_store_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
     TCGv_i32 t0, t1, t2;
     TCGv_i64 extaddr;
     TCGv taddr;
@@ -8326,7 +8327,7 @@ static void gen_store_exclusive(DisasContext *s, int rd, int rt, int rt2,
     taddr = gen_aa32_addr(s, addr, opc);
     t0 = tcg_temp_new_i32();
     t1 = load_reg(s, rt);
-    if (size == 3)                                                                                                                                                                                                                                                                                                                                           {
+    if (size == 3) {
         TCGv_i64 o64 = tcg_temp_new_i64();
         TCGv_i64 n64 = tcg_temp_new_i64();
 
@@ -8358,6 +8359,15 @@ static void gen_store_exclusive(DisasContext *s, int rd, int rt, int rt2,
     } else {
         t2 = tcg_temp_new_i32();
         tcg_gen_extrl_i64_i32(t2, cpu_exclusive_val);
+        /*  void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
+                                TCGv_i32 newv, TCGArg idx, TCGMemOp memop)
+        *   addr: taddr = strex's addr
+        *   cmpv: t2 = cpu_exclusive_val = load_exclusive_result
+        *   newv: t1 = rt
+        *   retv: t0
+        * 
+        * 
+        */
         tcg_gen_atomic_cmpxchg_i32(t0, taddr, t2, t1, get_mem_index(s), opc);
         tcg_gen_setcond_i32(TCG_COND_NE, t0, t0, t2);
         tcg_temp_free_i32(t2);

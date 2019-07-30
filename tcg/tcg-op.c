@@ -2823,18 +2823,25 @@ static void * const table_cmpxchg[16] = {
     WITH_ATOMIC64([MO_64 | MO_BE] = gen_helper_atomic_cmpxchgq_be)
 };
 
+void tcg_gen_ldex(TCGv addr)
+{
+    //gen_helper_offload_load_exclusive((uint32_t)addr);
+}
+
 void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
                                 TCGv_i32 newv, TCGArg idx, TCGMemOp memop)
 {
 
 	// Q1: is TCGv a uint32 ? or a pointer to one.
 	// Q2: is content of TCGv plain ?
-    fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32] retv: %d, addr:%p, cmpv: %d, newv: %d, idx: %d, memop: %u\n", retv, addr, cmpv, newv, idx, memop);
+    fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32] retv: %d, addr:%p, cmpv: %d, newv: %d, idx: %d, memop: %u\n", retv, (uint32_t)addr, cmpv, newv, idx, memop);
     gen_helper_offload_cmpxchg_prelude((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
+  //  gen_helper_offload_cpu_exclusive_insight((uint32_t)cpu_exclusive_val, (uint32_t)cpu_exclusive_addr);
+
     memop = tcg_canonicalize_memop(memop, 0, 0);
-
+    
     if (!(tcg_ctx->tb_cflags & CF_PARALLEL)) {
-
+        fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32]\tDEBUG1\n");
         TCGv_i32 t1 = tcg_temp_new_i32();
         TCGv_i32 t2 = tcg_temp_new_i32();
 
@@ -2859,16 +2866,19 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
         tcg_debug_assert(gen != NULL);
 
 #ifdef CONFIG_SOFTMMU
+        /* this block won't happen in DQEMU */
         {
             TCGv_i32 oi = tcg_const_i32(make_memop_idx(memop & ~MO_SIGN, idx));
             gen(retv, cpu_env, addr, cmpv, newv, oi);
             tcg_temp_free_i32(oi);
         }
 #else
+        
         gen(retv, cpu_env, addr, cmpv, newv);
 #endif
-
+        /* this branch won't happen in DQEMU */
         if (memop & MO_SIGN) {
+            fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32]\tDEBUG3\n");
             tcg_gen_ext_i32(retv, retv, memop);
         }
     }

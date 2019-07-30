@@ -876,3 +876,5 @@ linux-user/tags
 capstone/cmake-build-debug/
 capstone/include/CMakeLists.txt
 compile_commands.json
+*.txt
+core

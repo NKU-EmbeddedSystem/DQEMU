@@ -980,7 +980,7 @@ void process_pending_signals(CPUArchState *cpu_env)
                 sigdelset(&ts->signal_mask, target_to_host_signal_table[sig]);
                 sigact_table[sig - 1]._sa_handler = TARGET_SIG_DFL;
             }
-
+            
             handle_pending_signal(cpu_env, sig, &ts->sync_signal);
         }
 

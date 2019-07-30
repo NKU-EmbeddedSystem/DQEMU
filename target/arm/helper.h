@@ -654,8 +654,8 @@ DEF_HELPER_FLAGS_6(gvec_fmla_idx_d, TCG_CALL_NO_RWG,
 
 DEF_HELPER_3(offload_cmpxchg_prelude, void, i32, i32, i32)
 DEF_HELPER_3(offload_cmpxchg_epilogue, void, i32, i32, i32)
-
-
+DEF_HELPER_1(offload_load_exclusive, void, i32)
+DEF_HELPER_2(offload_cpu_exclusive_insight, void, i32, i32)
 #ifdef TARGET_AARCH64
 #include "helper-a64.h"
 #include "helper-sve.h"

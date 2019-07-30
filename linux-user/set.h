@@ -6,9 +6,7 @@
 struct set
 {
 	int element[100];
-
 	int size;
-	
 };
 
 

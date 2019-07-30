@@ -4,7 +4,7 @@
 
 #define MAP_PAGE_BITS 12
 // prefetch
-#define MAX_WORKER 20
+#define MAX_WORKER 32
 #define PREFETCH_PAGE_MAX 1000
 #define PREFETCH_LAUNCH_VALVE 4
 #define PREFETCH_LIFE 20
@@ -103,6 +103,7 @@
 #include "uname.h"
 #include "qemu.h"
 static void offload_send_mutex_verified(int);
+
 static void offload_process_mutex_done(void);
 static void offload_send_syscall_result(int,abi_long);
 static void offload_process_syscall_request(void);
@@ -113,6 +114,8 @@ static void print_futex_table();
 static void futex_table_add(uint32_t futex_addr, int idx);
 static int try_recv(int);
 static int communication_send_sum, communication_recv_sum;
+static pthread_mutex_t g_cas_mutex = PTHREAD_MUTEX_INITIALIZER;
+extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
 int syscall_started_flag;
 //int requestor_idx, target_ulong addr, int perm
 struct info
@@ -137,7 +140,6 @@ struct syscall_param
 };
 
 struct syscall_param* syscall_global_pointer;
-
 static pthread_mutex_t clone_syscall_mutex;
 static int testint = 233;
 struct Node
@@ -161,7 +163,6 @@ struct pgft_record
 	int pref_count;// how many is beging prefetching
 	int page_hit_count;// for conflicting pages
 	struct pgft_record *next;
-
 };
 
 static struct futex_record * futex_table;
@@ -176,14 +177,12 @@ static void show_prefetch_list(int idx);
 
 #define fprintf offload_log
 
-#define MUTEX_LIST_MAX 10
-#define FUTEX_RECORD_MAX 10
+#define MUTEX_LIST_MAX 32
+#define FUTEX_RECORD_MAX 32
 
-#define WORKER_COUNT 10
+#define WORKER_COUNT 32
 
 static __thread char net_buffer[NET_BUFFER_SIZE];
-
-static int __thread has_pending_request;
 
 static target_ulong mutex_list[MUTEX_LIST_MAX] = {0};
 
@@ -199,38 +198,26 @@ struct MutexTuple
 };
 
 static struct MutexTuple MutexList[MUTEX_LIST_MAX];
-
-/*
-static int __thread pending_request_addr;
-static int __thread pending_futex_addr;
-static int __thread pending_requestor;
-static int __thread pending_page_request_perm;
-*/
-
-struct request_t
+FILE *log;
+typedef struct cas_record
 {
+	uint32_t cas_addr;
+	uint32_t cas_value;
+	int user;
+	struct cas_record *next;
+	struct cas_node *req_list;
+} cas_record;
 
-	enum
-	{
-		PAGE, FUTEX,
-	} type;
+typedef struct cas_node
+{
+	uint32_t cmpv;
+	uint32_t newv;
+	uint32_t strv;
+	int idx;
+	struct cas_node *next;
+} cas_node;
 
-	int addr;
-
-	int requestor;
-
-	int perm;
-
-
-	target_ulong uaddr;
-	int op;
-	int val;
-	target_ulong timeout;
-	target_ulong uaddr2;
-	int val3;
-};
-
-static __thread struct request_t pending_request;
+cas_record cas_list = {0, 0, 0, 0, 0};
 
 static int autoSend(int Fd,char* buf, int length, int flag);
 
@@ -251,7 +238,6 @@ target_ulong binary_end_address;
 
 int last_flag_recv = 1; // whether we received something.
 int last_flag_pending = 1; // whether we had a pending request.
-int last_flag_lock = 1; // whether we succeeded on try_lock
 
 static __thread int cmpxchg_flag;
 
@@ -264,43 +250,26 @@ static int is_first_do_syscall_thread;
 
 
 
+typedef struct req_node {
+	int idx;
+	int perm;
+	struct req_node *next;
+} req_node;
 
 typedef struct PageMapDesc {
-	uint32_t oflags;	/* original flags */
-	uint32_t flags;		/* current flags */
-
-	/* Used to sync with server */
-	int on_server;		/* if this page is on server side */
-
+	int on_master;						/* if this page is on master side */
 	int requestor;
-	//std::set<int> owner_set;
-
 	set_t owner_set;
-
-	pthread_mutex_t owner_set_mutex;
-
-	int mutex_count;
-	int mutex_holder;
-	//int cur_idx;
-	//pthread_mutex_t cmpxchg_mutex;
-	int invalid_count;
-
-
-
-	int recv_flag;
-	pthread_cond_t recv_cond;
-	pthread_mutex_t recv_mutex;
-
+	pthread_mutex_t owner_set_mutex;	/* We lock the mutex when start fetching for it, until receives ack */
+	int mutex_holder;					/* Not very useful unless for debugging */
+	int invalid_count;					/* How many we should tell to invalidate */
+	int cur_perm;
+	req_node list_head; 				/* to record request list */
 } PageMapDesc;
 
-
-
-
 PageMapDesc page_map_table[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section"))) __attribute__ ((aligned(4096))) = {0};
-
-
-pthread_once_t pmd_init_once = PTHREAD_ONCE_INIT;
-
+PageMapDesc *get_pmd(uint32_t page_addr);
+static int fetch_page_func(int requestor_idx, target_ulong addr, int perm);
 static uint32_t get_number(void)
 {
 	struct tcp_msg_header tmh = *((struct tcp_msg_header *) net_buffer);
@@ -309,7 +278,6 @@ static uint32_t get_number(void)
 static uint32_t get_tag(void)
 {
 	struct tcp_msg_header tmh = *((struct tcp_msg_header *) net_buffer);
-
 	return tmh.tag;
 }
 // used along with pthread_cond, indicate whether the page required by the execution thread is received.
@@ -340,10 +308,7 @@ static void offload_client_send_cmpxchg_ack(target_ulong);
 static void offload_process_page_ack(void);
 static void offload_send_page_perm(int idx, target_ulong page_addr, int perm);
 static int offload_client_fetch_page(int requestor_idx, uint32_t page_addr, int is_write);
-static void offload_client_send_futex_wait_result(int result);
-static void offload_client_process_futex_wait_request(void);
 static void offload_process_page_content(void);
-static void offload_client_process_futex_wake_request(void);
 void offload_client_pmd_init(void);
 
 
@@ -366,11 +331,8 @@ void offload_client_pmd_init(void)
 		{
 
 			pthread_mutex_init(&page_map_table[i][j].owner_set_mutex, NULL);
-			pthread_mutex_init(&page_map_table[i][j].recv_mutex, NULL);
-			pthread_cond_init(&page_map_table[i][j].recv_cond, NULL);
 			clear(&page_map_table[i][j].owner_set);
 			insert(&page_map_table[i][j].owner_set, 0);
-			page_map_table[i][j].mutex_count = 0;
 			//fprintf(stderr, "%d", page_map_table[i][j].owner_set.size);
 		}
 	}
@@ -389,7 +351,7 @@ static void offload_client_init(void)
 
 	fprintf(stderr, "[offload_client_init]\tindex: %d\n", offload_client_idx);
 
-
+	
 	skt[offload_client_idx] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	struct sockaddr_in server_addr, client_addr;
 	server_addr.sin_family = AF_INET;
@@ -493,7 +455,6 @@ static void offload_client_init(void)
 	pthread_cond_init(&send_cond[offload_client_idx], NULL);
 	communication_send_sum = 0;
 	communication_recv_sum = 0;
-	has_pending_request = 0;
 	// List[i] is the list for worker#i
 	show_prefetch_list(offload_client_idx);
 	return;
@@ -504,12 +465,6 @@ void close_network(void)
 {
 	close(skt[offload_client_idx]);
 }
-
-
-
-
-
-
 
 static int dump_self_maps(void)
 {
@@ -674,14 +629,14 @@ static void dump_code(void)
 	fprintf(stderr, "[dump_code]\tbinary start: %x end: %x, pc: %x\n", binary_start_address, binary_end_address, client_env->regs[15]);
 	int tmp[1];
 	cpu_memory_rw_debug(ENV_GET_CPU(client_env), 0x10324, tmp, 4, 1);
-	fprintf(stderr, "[dump_code]\t0x10324 is at host %x. = %x = %x\n", g2h(0x10324), *((uint32_t *) g2h(0x10324)), tmp[0]);
+	//fprintf(stderr, "[dump_code]\t0x10324 is at host %x. = %x = %x\n", g2h(0x10324), *((uint32_t *) g2h(0x10324)), tmp[0]);
 	target_disas(stderr, ENV_GET_CPU(client_env), client_env->regs[15], 10);
 	// why segmentation fault???????????????
 	//mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ);
 	memcpy((void *)p, (void *)(g2h(binary_start_address )), (unsigned int)binary_end_address - binary_start_address);
 	//fprintf(stderr, "here: %d %d %d\n", );
 	p += (uint32_t)binary_end_address - binary_start_address;
-	fprintf(stderr, "first code: %x", *((uint32_t *) g2h(client_env->regs[15])));
+	//fprintf(stderr, "first code: %x", *((uint32_t *) g2h(client_env->regs[15])));
 }
 
 static void dump_cpu(void)
@@ -826,12 +781,8 @@ static void offload_send_page_upgrade(int idx, target_ulong page_addr, int perm)
 
 void print_holder(uint32_t page_addr)
 {
-	int index = page_addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-
-	fprintf(stderr,"[print_holder]\taddr: %p index:%p index1:%p index2:%p\n",page_addr,index,index1,index2);
-	PageMapDesc *pmd = &page_map_table[index1][index2];
+	PageMapDesc *pmd = get_pmd(page_addr);
+	fprintf(stderr,"[print_holder]\taddr: %p\n",page_addr);
 	for (int i = 0; i < pmd->owner_set.size; i++)
 	{
 		int idx = pmd->owner_set.element[i];
@@ -842,163 +793,179 @@ void print_holder(uint32_t page_addr)
 	fprintf(stderr,"\n");
 }
 
-void* offload_client_fetch_page_thread(void* param)
+static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 {
-	offload_mode = 5;
-
-	struct info* info = (struct info*)param;
-	int requestor_idx = info->requestor_idx;
-	target_ulong addr = info->addr;
-	int perm = info->perm;
-	offload_client_idx = requestor_idx;
-	free(info);
-	fprintf(stderr, "[offload_fetch_page_thread]\tpending request working, addr:%p, idx:%d, perm:%d\n", addr, requestor_idx, perm);
+	fprintf(stderr, "[fetch_page_func]\t addr:%p, idx:%d, perm:%d\n", addr, requestor_idx, perm);
 	target_ulong page_addr = PAGE_OF(addr);
-
-	int index = addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-	PageMapDesc *pmd = &page_map_table[index1][index2];
-	if (last_flag_lock == 1)
-	{
-		fprintf(stderr, "[offload_fetch_page_thread]\tfetching page %x, locking\n", page_addr);
-	}
-	else
-	{
-		fprintf(stderr, "[offload_fetch_page_thread]\tzhebujiu liang le???\n");
-		exit(-1);
-	}
-	pthread_mutex_lock(&pmd->owner_set_mutex);
-	/* trylock succeed, fetching page */
+	PageMapDesc *pmd = get_pmd(addr);
+	/* pmd->owner_set_mutex must be locked before. */
 	pmd->mutex_holder = requestor_idx;
-	pmd->mutex_count++;
-	offload_log(stderr, "[offload_client_fetch_page_thread]\tpending lock succeed, count: %d, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_count, pmd->mutex_holder, perm, &pmd->owner_set_mutex);
-
+	//offload_log(stderr, "[fetch_page_func]\tpending lock succeed, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_holder, perm, &pmd->owner_set_mutex);
 	pmd->requestor = requestor_idx;
 	print_holder(page_addr);
 	if (perm == 2)
 	{
 			pmd->invalid_count = 0;
-
 			/* only one */
 			if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
 			{
 				fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
 				offload_send_page_upgrade(requestor_idx, page_addr, 2);
 				print_holder(page_addr);
-				//fprintf(stderr, "[offload_client_fetch_page_thread]\tunlocking...%p\n", &pmd->owner_set_mutex);
-				//pthread_mutex_unlock(&pmd->owner_set_mutex);
 			}
-			else
-			/* invalid_count = the number of sharing copies to invalidate */
-			for (int i = 0; i < pmd->owner_set.size; i++)
-			{
-				if (i == 0)
+			else {				
+				/* invalid_count = the number of sharing copies to invalidate */
+				pmd->invalid_count = pmd->owner_set.size;
+				for (int i = 0; i < pmd->owner_set.size; i++)
 				{
-					pmd->invalid_count = 1;//wait for the page content of element[0]
-					offload_send_page_request(pmd->owner_set.element[0], page_addr, 2, requestor_idx);
-					continue;
+					offload_send_page_request(pmd->owner_set.element[i], page_addr, 2, requestor_idx);
 				}
-				int idx = pmd->owner_set.element[i];
-				/* if read->write, donnot ask itself to send the page!!!!! */
-
-				if (idx == requestor_idx)
-				{
-					continue;
-				}
-
-
-				/* invalidate pages on other threads, retrieve the permission */
-				offload_send_page_upgrade(idx, page_addr, 0);
 			}
-
-
-			// ask 0 to send the page
-			// offload_send_page_request(pmd->owner_set.element[0], page_addr, 2, requestor_idx);
-			// // invalidate others' page
-			// for (int i = 1; i < pmd->owner_set.size; i++)
-			// {
-
-			// 	int idx = pmd->owner_set.element[i];
-			// 	if (idx == requestor_idx)
-			// 	{
-			// 		continue;
-			// 	}
-
-			// 	/* invalidate pages on other threads, retrieve the permission */
-			// 	//offload_send_page_request(idx, page_addr, 2, requestor_idx);
-			// 	offload_send_page_upgrade(idx, page_addr, 0);
-			// }
-
-
 	}
 	else if (perm == 1)
 	{
 		if (pmd->owner_set.size == 0)
 		{
-			offload_log(stderr, "[offload_client_fetch_page_thread]\terror: no one has the page\n");
+			offload_log(stderr, "[fetch_page_func]\terror: no one has the page\n");
 			exit(-1);
 		}
 		/* revoke page as shared page */
 		offload_send_page_request(pmd->owner_set.element[0], page_addr, 1, requestor_idx);
 	}
-	fprintf(stderr, "[offload_client_fetch_page_thread]\t sent\n");
-	last_flag_lock = 1;
-
+	fprintf(stderr, "[fetch_page_func]\t sent\n");
 	return 0;
-
-
 }
 
-static int offload_client_fetch_page(int requestor_idx, target_ulong addr, int perm)
+/* This is a backup of former version. */
+// void *offload_client_fetch_page_thread(void *param)
+// {
+// 	offload_mode = 5;
+
+// 	struct info *info = (struct info *)param;
+// 	int requestor_idx = info->requestor_idx;
+// 	target_ulong addr = info->addr;
+// 	int perm = info->perm;
+// 	offload_client_idx = requestor_idx;
+// 	free(info);
+// 	fprintf(stderr, "[offload_fetch_page_thread]\tpending request working, addr:%p, idx:%d, perm:%d\n", addr, requestor_idx, perm);
+// 	target_ulong page_addr = PAGE_OF(addr);
+
+// 	PageMapDesc *pmd = get_pmd(addr);
+// 	pthread_mutex_lock(&pmd->owner_set_mutex);
+// 	/* trylock succeed, fetching page */
+// 	pmd->mutex_holder = requestor_idx;
+// 	offload_log(stderr, "[offload_client_fetch_page_thread]\tpending lock succeed, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_holder, perm, &pmd->owner_set_mutex);
+
+// 	pmd->requestor = requestor_idx;
+// 	print_holder(page_addr);
+// 	if (perm == 2)
+// 	{
+// 		pmd->invalid_count = 0;
+// 		/* only one */
+// 		if ((pmd->owner_set.size == 1) && (pmd->owner_set.element[0] == requestor_idx))
+// 		{
+// 			fprintf(stderr, "[offload_client_fetch_page]\tthe only one who has it. size == %d, holder == #%d\n", pmd->owner_set.size, pmd->owner_set.element[0]);
+// 			offload_send_page_upgrade(requestor_idx, page_addr, 2);
+// 			print_holder(page_addr);
+// 			//fprintf(stderr, "[offload_client_fetch_page_thread]\tunlocking...%p\n", &pmd->owner_set_mutex);
+// 			//pthread_mutex_unlock(&pmd->owner_set_mutex);
+// 		}
+// 		else
+// 		{
+// 			/* invalid_count = the number of sharing copies to invalidate */
+// 			pmd->invalid_count = pmd->owner_set.size;
+// 			for (int i = 0; i < pmd->owner_set.size; i++)
+// 			{
+// 				offload_send_page_request(pmd->owner_set.element[i], page_addr, 2, requestor_idx);
+// 			}
+// 		}
+// 	}
+// 	else if (perm == 1)
+// 	{
+// 		if (pmd->owner_set.size == 0)
+// 		{
+// 			offload_log(stderr, "[offload_client_fetch_page_thread]\terror: no one has the page\n");
+// 			exit(-1);
+// 		}
+// 		/* revoke page as shared page */
+// 		offload_send_page_request(pmd->owner_set.element[0], page_addr, 1, requestor_idx);
+// 	}
+// 	fprintf(stderr, "[offload_client_fetch_page_thread]\t sent\n");
+// 	return 0;
+// }
+
+inline PageMapDesc* get_pmd(uint32_t page_addr)
 {
-
-	target_ulong page_addr = PAGE_OF(addr);
-
-	int index = addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
+	page_addr = PAGE_OF(page_addr);
+	page_addr = page_addr >> MAP_PAGE_BITS;
+	int index1 = (page_addr >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
+	int index2 = page_addr & (L2_MAP_TABLE_SIZE - 1);
 	PageMapDesc *pmd = &page_map_table[index1][index2];
-	if (last_flag_lock == 1)
-	{
-		fprintf(stderr, "[offload_fetch_page]\tfetching page %x, lock\n", page_addr);
+	return pmd;
+}
+
+static inline void show_pmd_list(req_node *p)
+{
+	while (p) {
+		fprintf(stderr, "[show_pmd_list]\tidx %d perm %d\n", p->idx, p->perm);
+		p = p->next;
 	}
-	else
-	{
-		fprintf(stderr, "[offload_fetch_page]\tzhebujiu liang le???\n");
-		exit(-1);
-	}
-
-	//pthread_mutex_lock(&pmd->owner_set_mutex);
-	int res = 1;//pthread_mutex_trylock(&pmd->owner_set_mutex);
-
-	if ((res != 0 )||1)//we throw a thread.
-	{
-		/* trylock failed, someone is asking for the page */
-		offload_log(stderr, "[offload_client_fetch_page]\tlock failed, count: %d, holder: %d throwing new thread...\n", pmd->mutex_count, pmd->mutex_holder);
-		struct info* param = (struct info*)malloc(sizeof(struct info));
-		param->requestor_idx = requestor_idx;
-		param->addr = addr;
-		param->perm = perm;
-		pthread_t pender;
-		pthread_create(&pender, NULL, offload_client_fetch_page_thread, param);
-		offload_log(stderr, "[offload_client_fetch_page]\tthread created.id:%d, addr:%p, perm:%d sent\n", requestor_idx, addr, perm);
-		return 0;
-		has_pending_request = 1;
-
-		pending_request.requestor = requestor_idx;
-		pending_request.addr = addr;
-		pending_request.perm = perm;
-		last_flag_lock = 0;
-
+}
+static int process_pmd(uint32_t page_addr)
+{
+	PageMapDesc *pmd = get_pmd(page_addr);
+	// TODO: This is just a naive fetch. Let readers go if there are multiple readers. */
+	int ret = pthread_mutex_trylock(&pmd->owner_set_mutex);
+	if (ret != 0) {
+		fprintf(stderr, "[process_pmd]\tGet lock failed, ret = %d. Holder: #%d, returning...\n", ret, pmd->mutex_holder);
 		return -1;
 	}
-	else
-	{
-		fprintf(stderr, "[offload_client_fetch_page]\twhat happened?\n");
-		exit(0);
+	
+	/* Deal with the pending request in queue. */
+	req_node *p = pmd->list_head.next;
+	if (p) {
+		show_pmd_list(p);
+		ret = fetch_page_func(p->idx, page_addr, p->perm);
+		if (ret == 0) {
+			pmd->list_head.next = p->next;
+			free(p);
+		}
+		else {
+			fprintf(stderr, "fetch page ret != 0\n");
+			exit(222);
+		}
 	}
+	else {
+		pthread_mutex_unlock(&pmd->owner_set_mutex);
+	}
+	return 0;
+	
+}
+/* Add the request to list and process it if we can */
+static int offload_client_fetch_page(int requestor_idx, uint32_t addr, int perm)
+{
 
+	offload_log(stderr, "[offload_client_fetch_page]\tadding to list page address %p\n", addr);
+	/* get the PageMapDesc pointer */
+	PageMapDesc *pmd = get_pmd(addr);
+	req_node *p = (req_node *)malloc(sizeof(req_node));
+	p->idx = requestor_idx;
+	p->perm = perm;
+	p->next = NULL;
+	req_node *pnode = &(pmd->list_head);
+	while (pnode->next != NULL) {
+		pnode = pnode->next;
+	}
+	pnode->next = p;
+	process_pmd(addr);
+	// struct info* param = (struct info*)malloc(sizeof(struct info));
+	// param->requestor_idx = requestor_idx;
+	// param->addr = addr;
+	// param->perm = perm;
+	// pthread_t pender;
+	// pthread_create(&pender, NULL, offload_client_fetch_page_thread, param);
+	// offload_log(stderr, "[offload_client_fetch_page]\tthread created.id:%d, addr:%p, perm:%d sent\n", requestor_idx, addr, perm);
+	return 0;
 }
 
 // show MutexList
@@ -1031,96 +998,153 @@ static void offload_show_mutex_list(void)
 	fprintf(stderr, "[offload_show_mutex_list]: showing MutexList...\n%s", buf);
 }
 
-// mutex start, record requestor 
+
+static void show_cas_list()
+{
+	return;
+	cas_record *tmp = cas_list.next;
+	cas_node *p;
+	char buff[1024];
+	memset(buff, 0, sizeof(buff));
+	fprintf(stderr, "[show_cas_list]\tShowing cas list...\n");
+	sprintf(buff, "\n");
+	while (tmp)
+	{
+		//fprintf(stderr, "[show_cas_list]\tDEBUG 1\n");
+		sprintf(buff, "%s\t\t\tcas_addr %p, cas_user %d, cas_val %x | list:",
+						buff, tmp->cas_addr, tmp->user, tmp->cas_value);
+		/* show the pending list */
+		p = tmp->req_list;
+		while (p)
+		{
+			//fprintf(stderr, "[show_cas_list]\tDEBUG 2\n");
+			sprintf(buff, "%s, id %d, cmpv %x, newv %x, strv %x",
+							buff, p->idx, p->cmpv, p->newv, p->strv);
+			p = p->next;
+		}
+		sprintf(buff, "%s\n", buff);
+		tmp = tmp->next;
+	}
+	fprintf(stderr, "[show_cas_list]\t%s\n", buff);
+}
+/* Search cas list and return the address of the cas_record.
+	NULL on not found.
+*/
+static cas_record* cas_list_lookup(uint32_t cas_addr)
+{
+	fprintf(stderr, "[cas_list_lookup]\tlooking up for cas_addr %p\n", cas_addr);
+	cas_record *tmp = cas_list.next;
+	while (tmp)
+	{
+		if (tmp->cas_addr == cas_addr)
+			break;
+		tmp = tmp->next;
+	}
+	return tmp;
+}
+
+
+/* add a record to cas list and return its address */
+static cas_record* cas_list_add_record(uint32_t cas_addr, uint32_t cas_val)
+{
+	fprintf(stderr, "[cas_list_add_record]\tadding record cas_addr %p, cas_val %x\n", cas_addr, cas_val);
+	cas_record *tmp = &cas_list;
+	while (tmp->next)
+	{
+		tmp = tmp->next;
+	}
+	tmp->next = (cas_record *)malloc(sizeof(cas_record));
+	tmp->next->cas_addr = cas_addr;
+	tmp->next->cas_value = cas_val;
+	tmp->next->next = NULL;
+	tmp->next->user = -1;
+	tmp->next->req_list = NULL;
+	return tmp->next;
+}
+/* add a pending request
+ * return 1 if it is a valid request and no one's using the cas -- it is good to go
+ * else return 0
+ */ 
+static int cas_list_add_request(cas_record *record, int idx, uint32_t cmpv, uint32_t newv, uint32_t strv)
+{
+	fprintf(stderr, "[cas_list_add_request]\tnew request cas_addr %p, idx %d, cmpv %x, newv %x, strv %x\n"
+															,record->cas_addr, idx, cmpv, newv, strv);
+	int is_first = (record->req_list == NULL) ? 1 : 0;
+	cas_node *p = (cas_node *)malloc(sizeof(cas_node));
+	p->idx = idx;
+	p->cmpv = cmpv;
+	p->newv = newv;
+	p->strv = strv;
+	p->next = NULL;
+	fprintf(stderr, "[cas_list_add_request]\tadding to pending list...\n");
+	if (is_first) {
+		fprintf(stderr, "[cas_list_add_request]\tthe first one!\n");
+		record->req_list = p;
+	}
+	else {
+		cas_node *tmp = record->req_list;
+		while (tmp->next) {
+			tmp = tmp->next;
+		}
+		tmp->next = p;
+	}
+	/* strv, the current value in slave, SHOULD equal to our value in center,
+	 * if not, what happened?
+	 */ 
+	if (strv != record->cas_value) {
+		fprintf(stderr, "[cas_list_add_request]\tThink I just saved you.\n");
+		/* We should invalidate its page now since it is inconsistent due to 
+		 * the race. However, if the former one has done cmpxchg, the page should
+		 * have been invalidated. Currently, we do nothing and double check if it
+		 * succeeds later.
+		 */
+	}
+	int good_to_go = 0;
+	/* Is it a valid request in proper time? */
+	if ((record->user == -1) && (cmpv == record->cas_value)) {
+		fprintf(stderr, "[cas_list_add_request]\tyou are good to go!\n");
+		good_to_go = 1;
+	}
+	else {
+		good_to_go = 0;
+	}
+	return good_to_go;
+}
+/* Add a new request and see if it is good to go */
 static void offload_process_mutex_request(void)
 {
 
 	p = net_buffer;
-	target_ulong mutex_addr = *(target_ulong *) p;
+	target_ulong cas_addr = *(target_ulong *) p;
 	p += sizeof(target_ulong);
 	uint32_t requestorId = *(uint32_t *) p;
-	fprintf(stderr, "[offload_process_mutex_request client#%d]\trequested mutex address: %p from %d\n", offload_client_idx, mutex_addr, requestorId);
-
-	//static
-	//static mutex_count = 0;
-	//check if exists
-	int i = 0;
-	int spare = -1;
-	int queue_flag = 0;
-	int index = -1;
-	// find spare & check
-	for (;i < MUTEX_LIST_MAX;i++)
+	p += sizeof(uint32_t);
+	uint32_t cmpv = *(uint32_t*)p;
+	p += sizeof(uint32_t);
+	uint32_t newv = *(uint32_t*)p;
+	p += sizeof(uint32_t);
+	uint32_t strv = *(uint32_t*)p;
+	fprintf(stderr, "[offload_process_mutex_request client#%d]\trequested mutex address: %p from %d, cmpv %x, newv %x, strv %x\n", 
+					offload_client_idx, cas_addr, requestorId, cmpv, newv, strv);
+	pthread_mutex_lock(&g_cas_mutex);
+	show_cas_list();
+	cas_record *record = cas_list_lookup(cas_addr);
+	if (!record)
 	{
-		// nothing here: save spare
-		if (MutexList[i].mutexAddr == 0)
-		{
-			if (spare < 0) spare = i;
-			continue;
-		}
-		// something here: check if in use
-		if (MutexList[i].mutexAddr == mutex_addr)
-		{
-			fprintf(stderr, "[offload_process_mutex_request client#%d]\tmutex addr %p in use, queuing\n", offload_client_idx, mutex_addr);
-			queue_flag = 1;
-			index = i;
-		}
+		/* the first one should success. */
+		assert(cmpv == strv);
+		record = cas_list_add_record(cas_addr, strv);
 	}
-
-
-	// 1st to request, add mutex, verified
-	if (queue_flag == 0)
-	{
-		if (spare < 0)
-		{
-			fprintf(stderr, "[offload_process_mutex_request client#%d]\tmutex full\n", offload_client_idx);
-			exit(0);
-		}
-		MutexList[spare].mutexAddr = mutex_addr;
-		MutexList[spare].holderId = requestorId;
+	int good_to_go = cas_list_add_request(record, requestorId, cmpv, newv, strv);
+	show_cas_list();
+	if (good_to_go == 1) {
+		record->user = requestorId;
 		offload_send_mutex_verified(requestorId);
 	}
-	// if it is the same requestor
-	else if (MutexList[index].holderId == requestorId)
-	{
-		offload_send_mutex_verified(requestorId);
-		fprintf(stderr, "[offload_process_mutex_request client#%d]\tsame requestor, waking...\n", offload_client_idx);
-	}
-	// already in use, thus queueflag == 1, queue
-	else
-	{
-
-
-		// TODO: mutex锁
-		fprintf(stderr, "[offload_process_mutex_request client#%d]\tadd mutex %p\n", offload_client_idx, mutex_addr);
-
-		// pendingList full, should not happen
-		int tail = MutexList[index].tail;
-		int head = MutexList[index].head;
-		if (MutexList[index].hasPending && (tail == head))
-		{
-			int j = 0;
-
-			for (;j<WORKER_COUNT; j++)
-			{
-				fprintf(stderr, "%d\n", MutexList[index].pendingList[j]);
-			}
-			fprintf(stderr, "[offload_process_mutex_request client#%d]\t mutex %p !!MORE THAN WOEKER_COUNT!!\n", offload_client_idx, mutex_addr);
-			exit(0);
-		}
-		// queue
-		MutexList[index].pendingList[tail] = requestorId;
-		MutexList[index].hasPending = 1;
-		MutexList[index].tail = (tail + 1) % WORKER_COUNT;
-
-		//debug
-		// for (;head != tail; head++)
-		// {
-		//	fprintf(stderr, "pending: %d\n", MutexList[index].pendingList[head]);
-		//	head %= WORKER_COUNT;
-		// }
-	}
-	offload_show_mutex_list();
+	show_cas_list();
+	pthread_mutex_unlock(&g_cas_mutex);
 }
+
 
 /* fetch page */
 static void offload_process_page_request(void)
@@ -1135,26 +1159,30 @@ static void offload_process_page_request(void)
 	/*uint32_t got_flag = *(uint32_t *)p;
 	p += sizeof(uint32_t);*/
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
+	fprintf(log, "%d\t%p\t%d\n", offload_client_idx, page_addr, perm);
 	/* Check if already in prefetch list */
 	int isInPrefetch = prefetch_check(page_addr, offload_client_idx);
-	if (isInPrefetch<0)
-	{
-		sleep(0.5);
-	}
+	// if (isInPrefetch<0)
+	// {
+	// 	sleep(0.5);
+	// }
 	offload_client_fetch_page(offload_client_idx, page_addr, perm);
 	if (isInPrefetch < 0)
 	{
 		fprintf(stderr, "[offload_process_page_request client#%d]\tIn list, prefetch stops\n", offload_client_idx);
 		return;
 	}
-	int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
-	/* limit the prefetch count to avoid too much thread at a time */
-	//prefetch_count = prefetch_count > 100 ? 100 : prefetch_count;
+	else {
 	
-	if (prefetch_count > 0) {
-		fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
-		for (int i = 0; i < prefetch_count; i++) {
-			offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, perm);
+		int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
+		/* limit the prefetch count to avoid too much thread at a time */
+		prefetch_count = prefetch_count > 500 ? 500 : prefetch_count;
+		
+		if (prefetch_count > 0) {
+			fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
+			for (int i = 0; i < prefetch_count; i++) {
+				offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, perm);
+			}
 		}
 	}
 }
@@ -1204,23 +1232,12 @@ static int try_recv(int size)
 	return size;
 }
 
-static void offload_client_routine(void)
-{
-
-
-
-	//forward_page_request();
-
-	//send_page_result();
-}
-
 void* offload_client_daemonize(void)
 {
 	offload_mode = 2;
 	int res;
 	last_flag_recv = 1;
 	last_flag_pending = 1;
-	last_flag_lock = 1;
 	fprintf(stderr, ">>>>>>>>>>> client# %d guest_base: %x\n", offload_client_idx, guest_base);
 	while (1)
 	{
@@ -1268,18 +1285,6 @@ void* offload_client_daemonize(void)
 					offload_process_page_ack();
 					break;
 
-				case TAG_OFFLOAD_FUTEX_WAIT_REQUEST:
-					fprintf(stderr, "[offload_client_daemonize]\ttag: futex wait request\n");
-					try_recv(tcp_header->size);
-					offload_client_process_futex_wait_request();
-					break;
-
-				case TAG_OFFLOAD_FUTEX_WAKE_REQUEST:
-					fprintf(stderr, "[offload_client_daemonize]\ttag: futex wake request\n");
-					try_recv(tcp_header->size);
-					offload_client_process_futex_wake_request();
-					break;
-
 				case TAG_OFFLOAD_CMPXCHG_REQUEST:
 					fprintf(stderr, "[offload_client_daemonize]\ttag: cmpxchg request\n");
 					try_recv(tcp_header->size);
@@ -1289,6 +1294,7 @@ void* offload_client_daemonize(void)
 				case TAG_OFFLOAD_CMPXCHG_VERYFIED:
 					fprintf(stderr, "[offload_client_daemonize]\ttag: cmpxchg verified\n");
 					try_recv(tcp_header->size);
+					exit(3);
 					break;
 
 				case TAG_OFFLOAD_CMPXCHG_DONE:
@@ -1315,66 +1321,6 @@ void* offload_client_daemonize(void)
 		{
 			last_flag_recv = 0;
 		}
-
-
-		if (has_pending_request == 1)
-		{
-			fprintf(stderr, "[offload_client_daemonize]\thas pending request\n");
-
-
-
-			last_flag_pending = 1;
-			target_ulong addr = pending_request.addr;
-			int perm = pending_request.perm;
-			int requestor = pending_request.requestor;
-
-			offload_client_fetch_page(requestor, addr, perm);
-			offload_log(stderr, "[offload_client_daemonize]\tdealt pending request\n");
-			has_pending_request = 0;
-
-			if (requestor == -1)
-			{
-				// will not happen
-				exit(0);
-				// futex
-				offload_log(stderr, "[offload_client_daemonize]\tpending request is a futex request\n");
-				int index = addr >> MAP_PAGE_BITS;
-				int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-				int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-				PageMapDesc *pmd = &page_map_table[index1][index2];
-				pthread_mutex_lock(&pmd->recv_mutex);
-				while (pmd->invalid_count != 0)
-				{
-					pthread_cond_wait(&pmd->recv_mutex, &pmd->recv_cond);
-				}
-				pthread_mutex_unlock(&pmd->recv_mutex);
-
-				int ret = offload_client_futex_wake(pending_request.uaddr,
-					pending_request.op, pending_request.val,
-					pending_request.timeout, pending_request.uaddr2,
-					pending_request.val3);
-				offload_client_futex_epilogue(PAGE_OF(addr));
-				offload_client_send_futex_wake_result(ret);
-			}
-			else if (requestor >= 0)
-			{
-				// a page request
-				offload_log(stderr, "[offload_client_daemonize]\tpending request is a page request\n");
-			}
-
-
-
-
-		}
-		else
-		{
-			// if (last_flag_pending == 1)
-			// {
-			//	fprintf(stderr, "[offload_client_daemonize]\tno pending request\n");
-			// }
-
-			last_flag_pending = 0;
-		}
 	}
 }
 extern pthread_mutex_t offload_center_init_mutex; extern pthread_cond_t offload_center_init_cond;
@@ -1396,7 +1342,7 @@ void* offload_center_client_start(void *arg)
 
 	//sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
 	//CPUArchState *env = (CPUArchState *) arg;
-
+	log = fopen("pageReqLog.txt", "w");
 	offload_client_init();
 	pthread_mutex_lock(&offload_center_init_mutex);
 	pthread_cond_signal(&offload_center_init_cond);
@@ -1459,7 +1405,7 @@ static void print_futex_table()
 {
 	fprintf(stderr, "[print_futex_table]\tshowing futex table...\n");
 	int i = 0;
-	char buf[1024];
+	char buf[4096];
 	char tmp[200];
 	struct futex_record * p;
 	struct Node * pnode;
@@ -1591,6 +1537,7 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 	fprintf(stderr, "[futex_table_cmp_requeue]\tuaddr %p, futex_op %p, val %p, val2 %p, uaddr2 %p, val3 %p of idx %d\n",
 			uaddr, futex_op, val, val2, uaddr2, val3, idx);
 	print_futex_table();
+	offload_segfault_handler_positive(uaddr, 1);
 	if (*(int *)(g2h(uaddr)) != val3)
 	{
 		fprintf(stderr, "[futex_table_cmp_requeue]\t*(int*)(futex_addr) != cmpval, returning with EAGAIN...%p\n", TARGET_EAGAIN);
@@ -1778,6 +1725,7 @@ void syscall_daemonize(void)
 			void* futex_addr = arg1;
 			int cmpval = arg3;
 			fprintf(stderr, "[syscall_daemonize]\tfetching\n");
+			offload_segfault_handler_positive(futex_addr, 1);
 			if (*(int*)(g2h(futex_addr)) == cmpval)
 			{
 				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr) == cmpval, adding to futex table\n");
@@ -1818,6 +1766,7 @@ void syscall_daemonize(void)
 			if (isChildEnd == 1)
 			{
 				fprintf(stderr, "[syscall_daemonize]\tChild End!\n");
+				offload_segfault_handler_positive(futex_addr, 1);
 				*(int*)g2h(futex_addr) = 0;
 			}
 			futex_table_wake(futex_addr, wakeup_num, idx);
@@ -1833,6 +1782,7 @@ void syscall_daemonize(void)
 		else
 		{
 			if ((num == TARGET_NR_write)) {
+				offload_segfault_handler_positive(arg2, 1);
 				fprintf(stderr, "[syscall_daemonize]\tfetching write, %d %c %d\n", arg1, *(char*)g2h(arg2), arg3);
 			}
 			extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
@@ -1958,50 +1908,6 @@ void offload_syscall_daemonize_start(CPUArchState *the_env)
 }
 
 
-/*
-int client_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
-{
-	siginfo_t *info = pinfo;
-	ucontext_t *uc = (ucontext_t *)puc;
-	unsigned long host_addr = (unsigned long)info->si_addr;
-	//TODO ... do h2g on the host_addr to get the address of the segfault
-
-	unsigned long  guest_addr = h2g(host_addr);
-
-	//fprintf(stderr, "host adr: %p, guest adr: %p\n", host_addr, guest_addr);
-
-	target_ulong guest_page = guest_addr & TARGET_PAGE_MASK;
-	//fprintf(stderr, "Accessed guest addr %lx\n", guest_addr);
-	fprintf(stderr, "[client]\tpage fault on %x\n", guest_addr);
-
-	if (guest_page == got_page){
-		fprintf(stderr, "Accessed .got or .data address %lx\n", guest_addr);
-	}
-
-
-	int is_write = ((uc->uc_mcontext.gregs[REG_ERR] & 0x2) != 0);
-
-
-
-	if (guest_page == 0) {
-		fprintf(stderr, "Something is wrong, page addr is 0!\n");
-		//sleep(20);
-	}
-	page_recv_flag = 0;
-	offload_fetch_page(guest_page, is_write + 1);
-	pthread_mutex_lock(&page_recv_mutex);
-	while (page_recv_flag == 0)
-	{
-		pthread_cond_wait(&page_recv_cond, &page_recv_mutex);
-	}
-	pthread_mutex_unlock(&page_recv_mutex);
-
-
-
-	return 1;
-}
-*/
-
 static void offload_send_page_request(int idx, target_ulong page_addr, uint32_t perm, int forwho)
 {
 
@@ -2067,46 +1973,59 @@ static void offload_process_mutex_done(void)
 {
 
 	p = net_buffer;
-	uint32_t mutex_addr = *(uint32_t *) p;
+	uint32_t cas_addr = *(uint32_t *) p;
 	p += sizeof(uint32_t);
-	uint32_t doneId = *(uint32_t *)p;
+	uint32_t idx = *(uint32_t *)p;
 	p += sizeof(uint32_t);
-	fprintf(stderr, "[offload_process_mutex_done]\tmutex done signal %p from #%d\n", mutex_addr, doneId);
-	int i = 0;
-	while ((i<MUTEX_LIST_MAX) && (MutexList[i].mutexAddr != mutex_addr)) i++;
-	if (i == MUTEX_LIST_MAX)
-	{
-		fprintf(stderr, "[offload_process_mutex_done]\tONE NOT EXISTING MUTEX DONE\n");
-		return;
+	uint32_t nowv = *(uint32_t *)p;
+	fprintf(stderr, "[offload_process_mutex_done]\tcas done signal %p from #%d, nowv %x\n", cas_addr, idx, nowv);
+	pthread_mutex_lock(&g_cas_mutex);
+	show_cas_list();
+	cas_record *record = cas_list_lookup(cas_addr);
+	assert(record != NULL);
+	assert(record->user == idx);
+	cas_node *tmp = record->req_list, *tmp2;
+	assert(tmp != NULL);
+	fprintf(stderr, "[offload_process_mutex_done]\tRemoving pending request...\n");
+	/* Remove the pending request. shitty things to do if there's not a head in list */
+	if (tmp->idx == idx) {
+		/* It should not fail. */
+		assert(tmp->newv == nowv);
+		record->req_list = tmp->next;
+		free(tmp);
 	}
-	// the last one, clear mutex
-	if (!MutexList[i].hasPending)
-	{
-		MutexList[i].mutexAddr = 0;
-		MutexList[i].head = 0;
-		MutexList[i].tail = 0;
-		fprintf(stderr, "[offload_process_mutex_done]\tmutex %p from #%d removed\n", mutex_addr, doneId);
-		offload_show_mutex_list();
-		return;
+	else {
+		while (tmp->next && tmp->next->idx != idx) {
+			tmp = tmp->next;
+		}
+		/* there must be a pending request! */
+		assert(tmp->next != NULL);
+		/* It should not fail. */
+		assert(tmp->next->newv == nowv);
+		tmp2 = tmp->next;
+		tmp->next = tmp->next->next;
+		free(tmp2);
 	}
-	// wake up next one in the pending list
-
-	uint32_t nextOne = MutexList[i].pendingList[MutexList[i].head];
-	MutexList[i].head++;
-	MutexList[i].head %= WORKER_COUNT;
-	MutexList[i].holderId = nextOne;
-	// head == tail, list free
-	if (MutexList[i].head == MutexList[i].tail)
-	{
-		MutexList[i].hasPending = 0;
-		fprintf(stderr, "[offload_process_mutex_done]\tmutex %p from #%d removed, pending list free!\n", mutex_addr, doneId);
+	record->user = -1;
+	record->cas_value = nowv;
+	show_cas_list();
+	/* look up valid pending request */
+	fprintf(stderr, "[offload_process_mutex_done]\tLooking up valid user...\n");
+	tmp = record->req_list;
+	while (tmp) {
+		if (tmp->cmpv == record->cas_value)
+			break;
+		tmp = tmp->next;
 	}
-	// tell the nextOne
-	fprintf(stderr, "[offload_process_mutex_done]\tmutex %p from #%d, next one is: %d\n", mutex_addr, doneId, nextOne);
-
-	offload_send_mutex_verified(nextOne);
-	//pthread_mutex_unlock(&socket_mutex);
-	offload_show_mutex_list();
+	if (tmp) {
+		record->user = tmp->idx;
+		offload_send_mutex_verified(tmp->idx);
+	}
+	else {
+		fprintf(stderr, "[offload_process_mutex_done]\tno valid user!\n");
+	}
+	show_cas_list();
+	pthread_mutex_unlock(&g_cas_mutex);
 }
 
 static void offload_send_mutex_verified(int idx)
@@ -2143,10 +2062,7 @@ static void offload_process_page_ack(void)
 	uint32_t perm = *(uint32_t *) p;
 	p += sizeof(uint32_t);
 
-	int index = page_addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-	PageMapDesc *pmd = &page_map_table[index1][index2];
+	PageMapDesc *pmd = get_pmd(page_addr);
 
 	fprintf(stderr, "[offload_process_page_ack]\tprocessed page %x ack, perm: %d\n", page_addr, perm);
 	//pthread_mutex_lock(&pmd->owner_set_mutex);
@@ -2159,15 +2075,12 @@ static void offload_process_page_ack(void)
 	}
 	insert(&pmd->owner_set, offload_client_idx);
 
-	//print_holder(0xffe00000);
-	pmd->mutex_count--;
 	fprintf(stderr, "[offload_process_page_ack]\tunlocking...%p\n", &pmd->owner_set_mutex);
 	pthread_mutex_unlock(&pmd->owner_set_mutex);
 
-	offload_log(stderr, "[offload_process_page_ack]\tpage %x, unlock, count: %d\n", page_addr, pmd->mutex_count);
+	offload_log(stderr, "[offload_process_page_ack]\tpage %x, unlock\n", page_addr);
 	print_holder(page_addr);
-
-
+	process_pmd(page_addr);
 }
 
 
@@ -2212,10 +2125,7 @@ static void offload_process_page_content(void)
 	int forwho = *((int*) p);
 	p += sizeof(int);
 
-	int index = page_addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-	PageMapDesc *pmd = &page_map_table[index1][index2];
+	PageMapDesc *pmd = get_pmd(page_addr);
 
 	int requestor_idx = pmd->requestor;
 
@@ -2271,210 +2181,6 @@ static void offload_process_page_content(void)
 
 }
 
-extern int
-offload_client_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
-
-extern int
-offload_client_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
-
-static void offload_client_process_futex_wait_request()
-{
-	target_ulong uaddr, uaddr2, timeout;
-	int op, val, val3;
-
-
-	p = BUFFER_PAYLOAD_P;
-
-	uaddr = *((target_ulong *) p);
-
-
-	offload_log(stderr, "futex uaddr: %x, thread_cpu: %p\n", uaddr, thread_cpu);
-	p += sizeof(target_ulong);
-
-	op = *((uint32_t *) p);
-	offload_log(stderr, "futex op: %d\n", op);
-	p += sizeof(uint32_t);
-
-	val = *((uint32_t *) p);
-	p += sizeof(uint32_t);
-
-	timeout = *((target_ulong *) p);
-	p += sizeof(target_ulong);
-
-	uaddr2 = *((target_ulong *) p);
-	p += sizeof(target_ulong);
-
-	val3 = *((uint32_t *) p);
-	p += sizeof(uint32_t);
-
-
-	target_ulong page_addr = (uaddr >> 12) << 12;
-
-	int ret = offload_client_futex_prelude(page_addr);
-
-	if (ret == 0)	// if the page mutex is successfully locked
-	{
-		offload_log(stderr, "[offload_client_process_futex_wait_request]\tfutex prelude got the lock, continue\n");
-		ret = offload_client_futex_wait(uaddr, op, val, timeout, uaddr2, val3);
-		offload_client_futex_epilogue(page_addr);
-		offload_client_send_futex_wait_result(ret);
-	}
-	else if (ret < 0)
-	{
-		offload_log(stderr, "futex prelude didn't get the lock, pend\n");
-		pending_request.uaddr = uaddr;
-		pending_request.uaddr2 = uaddr2;
-		pending_request.timeout = timeout;
-		pending_request.op = op;
-		pending_request.val = val;
-		pending_request.val3 = val3;
-	}
-
-}
-
-static void offload_client_process_futex_wake_request()
-{
-	target_ulong uaddr, uaddr2, timeout;
-	int op, val, val3;
-
-
-	p = BUFFER_PAYLOAD_P;
-
-	uaddr = *((target_ulong *) p);
-
-	p += sizeof(target_ulong);
-
-	op = *((uint32_t *) p);
-	p += sizeof(uint32_t);
-
-	val = *((uint32_t *) p);
-	p += sizeof(uint32_t);
-
-	timeout = *((target_ulong *) p);
-	p += sizeof(target_ulong);
-
-	uaddr2 = *((target_ulong *) p);
-	p += sizeof(target_ulong);
-
-	val3 = *((uint32_t *) p);
-	p += sizeof(uint32_t);
-
-
-	target_ulong page_addr = (uaddr >> 12) << 12;
-
-	int ret;
-
-	ret = offload_client_futex_prelude(page_addr);
-
-	if (ret == 0)
-	{
-
-		offload_log(stderr, "[offload_client_process_futex_wake_request]\tfutex prelude got the lock, continue\n");
-		ret = offload_client_futex_wake(uaddr, op, val, timeout, uaddr2, val3);
-		offload_client_futex_epilogue(page_addr);
-		offload_client_send_futex_wake_result(ret);
-	}
-	else if (ret < 0)
-	{
-		offload_log(stderr, "futex prelude didn't get the lock, pend\n");
-		pending_request.uaddr = uaddr;
-		pending_request.uaddr2 = uaddr2;
-		pending_request.timeout = timeout;
-		pending_request.op = op;
-		pending_request.val = val;
-		pending_request.val3 = val3;
-	}
-}
-
-static void offload_client_send_futex_wait_result(int result)
-{
-	p = BUFFER_PAYLOAD_P;
-
-	*((int *) p) = result;
-	p += sizeof(int);
-
-
-	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
-	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FUTEX_WAIT_RESULT);
-
-	int res = autoSend(offload_client_idx, net_buffer, p - net_buffer, 0);
-	if (res < 0)
-	{
-		fprintf(stderr, "[offload_client_send_futex_wait_result]\tsent futex wait result failed\n");
-		exit(0);
-	}
-	fprintf(stderr, "[offload_client_send_futex_wait_result]\tsent futex wait result\n");
-	return;
-}
-
-static void offload_client_send_futex_wake_result(int result)
-{
-	p = BUFFER_PAYLOAD_P;
-
-	*((int *) p) = result;
-	p += sizeof(int);
-
-
-	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
-	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FUTEX_WAKE_RESULT);
-
-	int res = autoSend(offload_client_idx, net_buffer, p - net_buffer, 0);
-	if (res < 0)
-	{
-		fprintf(stderr, "[offload_client_send_futex_wake_result]\tsent futex wake result failed\n");
-		exit(0);
-	}
-	fprintf(stderr, "[offload_client_send_futex_wake_result]\tsent futex wake result\n");
-	return;
-}
-
-static int offload_client_futex_prelude(target_ulong page_addr)
-{
-	int index = page_addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-	PageMapDesc *pmd = &page_map_table[index1][index2];
-	pmd->recv_flag = 0;
-	int ret = offload_client_fetch_page(-1, page_addr, 2);
-
-	if (ret == 0)
-	{
-		// if the page mutex was successfully locked, request was sent
-		// we can wait here.
-		pthread_mutex_lock(&pmd->recv_mutex);
-		while (pmd->invalid_count != 0)
-		{
-			pthread_cond_wait(&pmd->recv_mutex, &pmd->recv_cond);
-		}
-		pthread_mutex_unlock(&pmd->recv_mutex);
-
-		return ret;
-	}
-	else if (ret < 0)
-	{
-		// otherwise just return immediately.
-		return ret;
-	}
-
-
-
-
-}
-
-static void offload_client_futex_epilogue(target_ulong page_addr)
-{
-	fprintf(stderr, "[offload_client_futex_epilogue]\twhat the hell?\n");
-	exit(-1);
-	/* epilogue */
-	//target_ulong page_addr = (uaddr >> 12) << 12;
-	int index = page_addr >> MAP_PAGE_BITS;
-	int index1 = (index >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
-	int index2 = index & (L2_MAP_TABLE_SIZE - 1);
-	PageMapDesc *pmd = &page_map_table[index1][index2];
-	fprintf(stderr, "[offload_client_futex_epilogue]\tunlocking...%p\n", &pmd->owner_set_mutex);
-	pthread_mutex_unlock(&pmd->owner_set_mutex);
-}
-
 void* process_syscall_thread(void* syscall_pp)
 {
 
@@ -2508,40 +2214,12 @@ void* process_syscall_thread(void* syscall_pp)
 	pthread_cond_signal(&do_syscall_cond);
 	fprintf(stderr, "[process_syscall_thread]\texiting mutex\n");
 	pthread_mutex_unlock(&do_syscall_mutex);
-
-
 	fprintf(stderr, "[process_syscall_thread]\twoke up, done.\n");
-	/*
-	extern void print_syscall(int num,
-              abi_long arg1, abi_long arg2, abi_long arg3,
-              abi_long arg4, abi_long arg5, abi_long arg6);
-	print_syscall(num,
-              arg1, arg2, arg3,
-              arg4, arg5, arg6);
-	fprintf(stderr, "[process_syscall_thread]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
-	extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
-                    abi_long arg2, abi_long arg3, abi_long arg4,
-                    abi_long arg5, abi_long arg6, abi_long arg7,
-                    abi_long arg8);
-	abi_long ret = do_syscall(cpu_env,
-				num,
-				arg1,
-				arg2,
-				arg3,
-				arg4,
-				arg5,
-				arg6,
-				0, 0);
-	offload_send_syscall_result(idx, ret);
-	//free(cpu_env);
-	*/
 }
 
 static void offload_process_syscall_request(void)
 {
-
 	p = net_buffer;
-
 	CPUARMState* env = (CPUARMState*)malloc(sizeof(CPUARMState));
 	*env = *((CPUARMState*)p);
 	//void* cpu_env = *(void**) p;
@@ -2586,57 +2264,7 @@ static void offload_process_syscall_request(void)
 
 
 	pthread_t syscall_thread;
-	// if ((num == TARGET_NR_futex)
-	// 	&& (arg2 == FUTEX_PRIVATE_FLAG|FUTEX_WAIT))
-	// {
-	// 	fprintf(stderr, "[offload_process_syscall_request]\treceived FUTEX_PRIVATE_FLAG|FUTEX_WAIT\n");
-	// 	//exit(-2);
-	// 	//return;
-	// 	//TODO futex
-
-
-
-	// }
-	// if ((num == TARGET_NR_futex)
-	// 	&& (arg2 == FUTEX_PRIVATE_FLAG|FUTEX_WAKE))
-	// {
-	// 	fprintf(stderr, "[offload_process_syscall_request]\treceived FUTEX_PRIVATE_FLAG|FUTEX_WAKE %p\n", FUTEX_PRIVATE_FLAG|FUTEX_WAKE);
-
-	// }
-	// if ((num == TARGET_NR_futex)
-	// 	&& (arg2 == FUTEX_PRIVATE_FLAG|FUTEX_WAKE))
-	// {
-	// 	fprintf(stderr, "[offload_process_syscall_request]\treceived futex_WAKE!!!, ignore...\n");
-	// 	exit(1);
-	// 	return;
-	// }
 	pthread_create(&syscall_thread,NULL,process_syscall_thread,(void*)syscall_p);
-	/*
-	fprintf(stderr, "[process_syscall_thread]\tprocessing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
-	extern void print_syscall(int num,
-              abi_long arg1, abi_long arg2, abi_long arg3,
-              abi_long arg4, abi_long arg5, abi_long arg6);
-	print_syscall(num,
-              arg1, arg2, arg3,
-              arg4, arg5, arg6);
-	fprintf(stderr, "[process_syscall_thread]\teabi:%p\n",((CPUARMState *)env)->eabi);
-	extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
-                    abi_long arg2, abi_long arg3, abi_long arg4,
-                    abi_long arg5, abi_long arg6, abi_long arg7,
-                    abi_long arg8);
-	abi_long ret = do_syscall(env,
-				num,
-				arg1,
-				arg2,
-				arg3,
-				arg4,
-				arg5,
-				arg6,
-				0, 0);
-	offload_send_syscall_result(idx, ret);
-	*/
-	//pthread_mutex_unlock(&socket_mutex);
-	//offload_show_mutex_list();
 }
 
 static void offload_send_syscall_result(int idx, abi_long result)
@@ -2677,18 +2305,20 @@ static int prefetch_check(uint32_t page_addr, int idx)
 	int i = 0;
 	while (p)
 	{
-		beg = p->fetch_beg_addr;
-		end = beg + p->pref_count * 0x1000;
-		if ((page_addr>=beg) && (page_addr<=end)){
-			fprintf(stderr, "[prefetch_check]\talready in list, pos: %d\n", i);
-			
-			return -1;
+		if (p->pref_count !=0) {
+			beg = p->fetch_beg_addr;
+			end = beg + p->pref_count * 0x1000;
+			if ((page_addr>=beg) && (page_addr<=end)){
+				fprintf(stderr, "[prefetch_check]\talready in list, pos: %d\n", i);				
+				return -1;
+			}
 		}
 		i++;
 		p = p->next;
 	}
 	return 0;
 }
+
 // for prefetch page for server
 //TODO weight how much does this cost
 //TODO exclusive send test & how much would it cost(mutex)
@@ -2744,9 +2374,10 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		if (p->wait_hit_count < 4)  				// not started
         {
 			p->wait_addr = page_addr + PAGE_SIZE;		// wait at next page
-            p->life = PREFETCH_LIFE;
+            p->life = 100;
         } 
 		else {    // >=4 , launched
+			
 			if (p->pref_count == 0) p->pref_count = PREFETCH_BEGIN_PAGE_COUNT;
             else  p->pref_count *= 2;
 			if (p->pref_count > PREFETCH_PAGE_MAX)
@@ -2755,6 +2386,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 			/* wait at next page */
             p->wait_addr = page_addr + (p->pref_count + 1)*PAGE_SIZE;
 			p->fetch_beg_addr = page_addr;
+			p->life += ret;
 			fprintf(stderr, "[prefetch_handler]\tPrefetching for %p for %d pages, waiting at %p\n", page_addr, p->pref_count, p->wait_addr);
 		}
 

@@ -359,10 +359,6 @@ void cpu_loop(CPUARMState *env)
                     } else {
                         fprintf(stderr, "[arm-cpu]\tdoing syscall, current env: %p\n", env);
                         extern int offload_server_idx;
-                        if (n == TARGET_NR_futex)
-                        {
-                            //fprintf(stderr, "[arm-cpu]\tignoring futex\n");
-                        }
                         if ((n == TARGET_NR_write
                             || n == TARGET_NR_read
                             || n == TARGET_NR_openat
@@ -372,10 +368,16 @@ void cpu_loop(CPUARMState *env)
                             || n == TARGET_NR_stat64
                             || n == TARGET_NR_lstat64
                             || n == TARGET_NR_fstat64
-                            || n == TARGET_NR_gettimeofday
+                            //|| n == TARGET_NR_gettimeofday
                             || n == TARGET_NR_futex
                             || n == TARGET_NR_clock_gettime
                             || n == TARGET_NR_writev
+                            || n == TARGET_NR_brk
+                            || n == TARGET_NR_mmap2
+                            || n == TARGET_NR_mprotect
+                            || n == TARGET_NR_madvise
+                            || n == TARGET_NR_mprotect
+                            || n == TARGET_NR_munmap
                             //|| (n == TARGET_NR_futex && env->regs[1] != 128)
                             ) && offload_server_idx>0)
                         {
@@ -394,16 +396,19 @@ void cpu_loop(CPUARMState *env)
                                                             abi_long arg2, abi_long arg3, abi_long arg4,
                                                             abi_long arg5, abi_long arg6, abi_long arg7,
                                                             abi_long arg8);
-                                ret = pass_syscall(env,
-                                                n,
-                                                env->regs[0],
-                                                env->regs[1],
-                                                env->regs[2],
-                                                env->regs[3],
-                                                env->regs[4],
-                                                env->regs[5],
-                                                0, 0);
-                                fprintf(stderr, "[arm-cpu]\tgot ret = %p\n", ret);
+                                ret = (abi_ulong)pass_syscall(env,
+                                                              n,
+                                                              env->regs[0],
+                                                              env->regs[1],
+                                                              env->regs[2],
+                                                              env->regs[3],
+                                                              env->regs[4],
+                                                              env->regs[5],
+                                                              0, 0);
+                                //if (n==TARGET_NR_futex)
+                                //    ret = 0xfffff001u;
+                                fprintf(stderr, "[arm-cpu]\tpass_syscall got ret = %p\n", ret);
+                                //assert((unsigned int)ret >= 0xfffff001u);
                             }
                         }
                         else
@@ -420,6 +425,8 @@ void cpu_loop(CPUARMState *env)
                                             env->regs[4],
                                             env->regs[5],
                                             0, 0);
+                            fprintf(stderr, "[arm-cpu]\tdo_syscall got ret = %p\n", ret);
+                            //assert((unsigned int)ret >= 0xfffff001u);
                         }
                         if (ret == -TARGET_ERESTARTSYS) {
                             env->regs[15] -= env->thumb ? 2 : 4;
@@ -478,8 +485,10 @@ void cpu_loop(CPUARMState *env)
         default:
         error:
             EXCP_DUMP(env, "qemu: unhandled CPU exception 0x%x - aborting\n", trapnr);
+            fprintf(stderr, "[cpu]\tqemu: unhandled CPU exception 0x%x - aborting\n", trapnr);
             abort();
         }
+        fprintf(stderr, "[cpu]\tProcessing pending signals\n");
         process_pending_signals(env);
     }
 }
