@@ -64,10 +64,11 @@ static void offload_server_process_futex_wake_result(void);
 void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
 void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
 extern void offload_server_qemu_init(void);
+extern void offload_server_extra_init(void);
 abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
-                    abi_long arg2, abi_long arg3, abi_long arg4,
-                    abi_long arg5, abi_long arg6, abi_long arg7,
-                    abi_long arg8);
+					  abi_long arg2, abi_long arg3, abi_long arg4,
+					  abi_long arg5, abi_long arg6, abi_long arg7,
+					  abi_long arg8);
 int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_process_syscall_result(void);
 static void offload_process_tid(void);
@@ -162,6 +163,9 @@ static void load_cpu(void)
 
 	fprintf(stderr,"[load_cpu]\tenv: %p\n", env);
 	CPUState *cpu = ENV_GET_CPU(env);
+	// extern CPUArchState *thread_cpu;
+	// thread_cpu = cpu;
+	// thread_cpu->envptr = env;
 	fprintf(stderr,"[load_cpu]\tcpu: %p\n", cpu);
 	TaskState *ts1;
 
@@ -206,6 +210,8 @@ static void load_memory_region(void)
 	
 	uint32_t num = *(uint32_t *)p;
     p += sizeof(uint32_t);
+	
+	
 	fprintf(stderr, "[load_memory_region]\tmemory region of 0%d\n", num);
 	
 	
@@ -225,8 +231,9 @@ static void load_memory_region(void)
         stack_end = *(target_ulong *)p;
         p += sizeof(target_ulong);
     }
-
-    for (uint32_t i = 0; i < num; i++) 
+	static int mapped[50] = {0}, mapped_count = 0;
+	int mapped_flag = 0;
+	for (uint32_t i = 0; i < num; i++) 
 	{
         uint32_t addr = *(uint32_t *)p;
         p += sizeof(uint32_t);
@@ -236,10 +243,20 @@ static void load_memory_region(void)
         p += sizeof(uint32_t);
 		uint32_t len = *(uint32_t *)p;
         p += sizeof(uint32_t);
-        
+		/* Check if we already mapped */
+		mapped_flag = 0;
+		for (int j = 0; j < 50; j++) {
+			if (mapped[j] == addr) {
+				mapped_flag = 1;
+				break;
+			}
+		}
+		if (mapped_flag)
+			continue;
+		/* Now we map the region. */
 		fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
-		
-		
+		mapped[mapped_count++] = addr;
+
 		int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
 							  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 		//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
@@ -283,18 +300,24 @@ static void load_binary(void)
 	p += sizeof(uint32_t);
 	binary_end_address= *(uint32_t *)p;
 	p += sizeof(uint32_t);
-	fprintf(stderr, "[load_binary]\tmap binary from %p to %x\n", binary_start_address, binary_end_address);
-	fprintf(stderr, "[load_binary]\there: %x %x %x\n", g2h(binary_start_address), g2h(binary_end_address), g2h((env->regs[15])));
-	
-	mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE);
-	
-	memcpy(g2h(binary_start_address), p, (unsigned int)binary_end_address - binary_start_address);
-	
-	fprintf(stderr, "[load_binary]\there: %d\n", *(uint32_t *) g2h(env->regs[15]));
-	disas(stderr, g2h(env->regs[15]), 10);
+	static first = 1;
+	if (first) {
+		fprintf(stderr, "[load_binary]\tmap binary from %p to %x\n", binary_start_address, binary_end_address);
+		fprintf(stderr, "[load_binary]\there: %x %x %x\n", g2h(binary_start_address), g2h(binary_end_address), g2h((env->regs[15])));
+		
+		mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE);
+		
+		memcpy(g2h(binary_start_address), p, (unsigned int)binary_end_address - binary_start_address);
+		
+		fprintf(stderr, "[load_binary]\there: %d\n", *(uint32_t *) g2h(env->regs[15]));
+		disas(stderr, g2h(env->regs[15]), 10);
 
-	fprintf(stderr, "[load_binary]\tcode: %x", *((uint32_t *) g2h(0x102fa)));
-	mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE | PROT_EXEC);
+		fprintf(stderr, "[load_binary]\tcode: %x", *((uint32_t *) g2h(0x102fa)));
+		mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE | PROT_EXEC);
+	}
+	else {
+		first = 0;
+	}
 	p += (unsigned int)binary_end_address-binary_start_address;
 }
 
@@ -304,8 +327,15 @@ static void* exec_func(void *arg)
 	
 	offload_mode = 3;
 	//pthread_mutex_lock(&socket_mutex);
-	offload_server_qemu_init();
-	
+	static int first = 1;
+	if (first == 1) {
+		offload_server_qemu_init();
+		first++;
+	}	
+	else {
+		offload_server_extra_init();
+		offload_server_idx = first;
+	}
 	
 	fprintf(stderr, "[exec_func]\tguest_base: %x\n", guest_base);
 	p = net_buffer;
@@ -332,6 +362,8 @@ static void* exec_func(void *arg)
 	//target_disas(stderr, ENV_GET_CPU(env), env->regs[15], 100);
 	//while (1) {;}
 
+	rcu_register_thread();
+	tcg_register_thread();
 
 	//pthread_mutex_unlock(&socket_mutex);
 	cpu_loop(env);

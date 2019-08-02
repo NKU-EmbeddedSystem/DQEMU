@@ -93,7 +93,9 @@ static inline int handle_cpu_signal(uintptr_t pc, siginfo_t *info,
      * If neither is true then something has gone wrong and we should
      * abort rather than try and restart the vCPU execution.
      */
-    if (!cpu || !cpu->running) {
+    printf("qemu: cpu %p running %d\n", cpu, cpu->running);
+    if (!cpu || !cpu->running)
+    {
         printf("qemu:%s received signal outside vCPU context @ pc=0x%"
                PRIxPTR "\n",  __func__, pc);
         abort();

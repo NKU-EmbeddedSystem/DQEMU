@@ -713,6 +713,11 @@ static void offload_send_start(void)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
+	if (offload_client_idx != 1) {
+		res = autoSend(1, net_buffer, (p - net_buffer), 0);
+		pthread_exit(0);
+		return;
+	}
 	res = autoSend(offload_client_idx, net_buffer, (p - net_buffer), 0);
 	fprintf(stderr, "[send]\tsent %d bytes\n", res);
 	//pthread_mutex_unlock(&socket_mutex);
@@ -1844,29 +1849,9 @@ void offload_client_start(CPUArchState *the_env)
 
 
 	int res;
-
-
-
-
 	client_env = the_env;
-	//pthread_mutex_lock(&clone_syscall_mutex);
 	offload_send_start();
-	//pthread_mutex_unlock(&clone_syscall_mutex);
-	//pthread_t syscall_daemonize_thread;
-	//pthread_create(&syscall_daemonize_thread, NULL, syscall_daemonize, NULL);
-	//pthread_t daemonize;
-	//pthread_create(&daemonize,NULL,offload_client_daemonize,NULL);
-
-	/* send server its tid */
-		/*
-	CPUState *cpu = ENV_GET_CPU((CPUArchState *)the_env);
-	TaskState *ts;
-	ts = cpu->opaque;
-	fprintf(stderr,"[offload_client_start]\tsending child_tidptr: %p\n", ts->child_tidptr);
-	*/
-		//offload_send_tid(offload_client_idx, ts->child_tidptr);
-
-		return;
+	return;
 }
 
 void offload_syscall_daemonize_start(CPUArchState *the_env)
