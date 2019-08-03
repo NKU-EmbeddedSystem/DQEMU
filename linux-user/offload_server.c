@@ -164,8 +164,9 @@ static void load_cpu(void)
 	fprintf(stderr,"[load_cpu]\tenv: %p\n", env);
 	CPUState *cpu = ENV_GET_CPU(env);
 	// extern CPUArchState *thread_cpu;
-	// thread_cpu = cpu;
-	// thread_cpu->envptr = env;
+	extern __thread CPUState *thread_cpu;
+	thread_cpu = cpu;
+	thread_cpu->env_ptr = env;
 	fprintf(stderr,"[load_cpu]\tcpu: %p\n", cpu);
 	TaskState *ts1;
 
@@ -173,7 +174,7 @@ static void load_cpu(void)
 	ts1 = cpu->opaque;
 	fprintf(stderr,"[load_cpu]\tNOW child_tidptr: %p\n", ts1->child_tidptr);
 	/* TaskState is a void*, we've to set it mannually */
-	TaskState* ts = malloc(sizeof(TaskState));
+	TaskState *ts = g_new0(TaskState, 1);
 	*ts = *((TaskState*) p);
 	p += sizeof(TaskState);
 	cpu->opaque = ts;
@@ -333,7 +334,7 @@ static void* exec_func(void *arg)
 		first++;
 	}	
 	else {
-		offload_server_extra_init();
+		//offload_server_extra_init();
 		offload_server_idx = first;
 	}
 	
@@ -411,9 +412,10 @@ static void offload_process_start(void)
 	fprintf(stderr, "[offload_process_start]\tcreate exec thread\n");
 	pthread_create(&exec_thread, NULL, exec_func, NULL);
 	fprintf(stderr, "[offload_process_start]\texec thread created\n");
+	/*
 	pthread_t killer_thread;
 	pthread_create(&exec_thread, NULL, cpu_killer, (void*)&exec_thread);
-
+	*/
 	//pthread_join(exec_thread, NULL);
 	
 }
@@ -1304,13 +1306,16 @@ static void offload_process_tid(void)
 	if (!env)
 	{
 		fprintf(stderr,"[offload_process_tid]\tenv: %p\n", env);
+		assert(env);
 	}
 	CPUState *cpu = ENV_GET_CPU((CPUArchState *)env);
 	if (!cpu)
 	{
 		fprintf(stderr,"[offload_process_tid]\tcpu: %p\n", cpu);
+		assert(cpu);
 	}
 	TaskState *ts;
+	assert(cpu->opaque);
 	ts = cpu->opaque;
 	ts->child_tidptr = tid;
 	fprintf(stderr,"[offload_process_tid]\tNOW child_tidptr: %p\n", ts->child_tidptr);

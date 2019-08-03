@@ -641,14 +641,8 @@ static void dump_code(void)
 
 static void dump_cpu(void)
 {
-	//offload_center_clone_mutex;
-	//pthread_mutex_lock(&offload_center_clone_mutex);
 	*((CPUARMState *) p) = *client_env;
-
-
-
 	p += sizeof(CPUARMState);
-
 	fprintf(stderr,"[dump_cpu]\tenv: %p\n", client_env);
 	CPUState *cpu = ENV_GET_CPU((CPUArchState *)client_env);
 	fprintf(stderr,"[dump_cpu]\tcpu: %p\n", cpu);
@@ -658,69 +652,36 @@ static void dump_cpu(void)
 	fprintf(stderr,"[dump_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
 	*((TaskState*)p) = *ts;
 	p += sizeof(TaskState);
-	//pthread_mutex_unlock(&offload_center_clone_mutex);
-	/**((uint32_t*)p) = (uint32_t)vfp_get_fpscr(env);
-	p += sizeof(uint32_t);
-
-
-	// cp15, don't know what it's used for
-	// the QEMU variable is 64 bit,
-	// but the CSBT transfer it in 32 bit
-	// don't know why either.
-	*((uint64_t*)p) = (uint64_t)(env->cp15.tpidrro_el[0]);
-	p += sizeof(uint64_t);
-
-
-	*((uint32_t*)p) = (uint32_t)cpsr_read(env);
-	p += sizeof(uint32_t);
-
-	memcpy(p, env->vfp.regs, sizeof(env->vfp.regs));
-	p += sizeof(env->vfp.regs);
-
-
-	memcpy(p, env->regs, sizeof(env->regs));
-	p += sizeof(env->regs);*/
 }
+
+/* Dump the informations and send to slave QEMU. */
 static void offload_send_start(void)
 {
-	//pthread_mutex_lock(&socket_mutex);
 	fprintf(stderr, "[client]\tsending offload start request\n");
 	int res;
-
 	p = BUFFER_PAYLOAD_P;
-
-
-
-	//printf(">>>>>>>>>>\n");
 	fprintf(stderr, "[client]\tdumping cpu\n");
 	dump_cpu();
 	fprintf(stderr, "[offload_send_start]\tregisters:\n");
-
 	for (int i = 0; i < 16; i++)
 	{
 		fprintf(stderr, "%d\n", client_env->regs[i]);
 	}
-	//dump_function_address();
 	dump_self_maps();
-
 	dump_brk();
-
-
 	dump_code();
 	fprintf(stderr, "[client]\tPC: %d\n", client_env->regs[15]);
-	//target_disas(stderr, ENV_GET_CPU(client_env), client_env->regs[15], 100);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
 	if (offload_client_idx != 1) {
-		res = autoSend(1, net_buffer, (p - net_buffer), 0);
+		res = autoSend(0, net_buffer, (p - net_buffer), 0);
 		pthread_exit(0);
 		return;
 	}
 	res = autoSend(offload_client_idx, net_buffer, (p - net_buffer), 0);
 	fprintf(stderr, "[send]\tsent %d bytes\n", res);
-	//pthread_mutex_unlock(&socket_mutex);
 }
 
 static int autoSend(int idx,char* buf, int length, int flag)
