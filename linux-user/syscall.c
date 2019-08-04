@@ -6503,7 +6503,7 @@ static void *clone_func_local(void *arg)
     TaskState *ts;
     extern __thread int offload_mode;
     extern int offload_server_idx;
-    offload_mode = 3;
+    offload_mode = 6;
 
     rcu_register_thread();
     tcg_register_thread();
@@ -6526,6 +6526,9 @@ static void *clone_func_local(void *arg)
     /* Wait until the parent has finished initializing the tls state.  */
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
+
+    fprintf(stderr, "[clone_func_local]\tguest base %p\n", guest_base);
+
     cpu_loop(env);
     /* never exits */
     return NULL;
@@ -6573,35 +6576,35 @@ void *clone_func_server_local(void *arg)
     extern void exec_func_init(void);
     fprintf(stderr, "[clone_func_server_local]\tEntering init...\n");
 
-    /*
-     * Now that page sizes are configured in tcg_exec_init() we can do
-     * proper page alignment for guest_base.
-     */
-	extern unsigned long guest_base;
-    extern unsigned long reserved_va;
-    extern int have_guest_base;
-    extern unsigned long init_guest_space(unsigned long host_start,
-                               unsigned long host_size,
-                               unsigned long guest_start,
-                               bool fixed);
-	guest_base = 0x3c00f000;
-    guest_base = HOST_PAGE_ALIGN(guest_base);
+    // /*
+    //  * Now that page sizes are configured in tcg_exec_init() we can do
+    //  * proper page alignment for guest_base.
+    //  */
+	// extern unsigned long guest_base;
+    // extern unsigned long reserved_va;
+    // extern int have_guest_base;
+    // extern unsigned long init_guest_space(unsigned long host_start,
+    //                            unsigned long host_size,
+    //                            unsigned long guest_start,
+    //                            bool fixed);
+	// guest_base = 0x3c00f000;
+    // guest_base = HOST_PAGE_ALIGN(guest_base);
 
-    if (reserved_va || have_guest_base) {
-        guest_base = init_guest_space(guest_base, reserved_va, 0,
-                                      have_guest_base);
-        if (guest_base == (unsigned long)-1) {
-            fprintf(stderr, "Unable to reserve 0x%lx bytes of virtual address "
-                    "space for use as guest address space (check your virtual "
-                    "memory ulimit setting or reserve less using -R option)\n",
-                    reserved_va);
-            exit(EXIT_FAILURE);
-        }
+    // if (reserved_va || have_guest_base) {
+    //     guest_base = init_guest_space(guest_base, reserved_va, 0,
+    //                                   have_guest_base);
+    //     if (guest_base == (unsigned long)-1) {
+    //         fprintf(stderr, "Unable to reserve 0x%lx bytes of virtual address "
+    //                 "space for use as guest address space (check your virtual "
+    //                 "memory ulimit setting or reserve less using -R option)\n",
+    //                 reserved_va);
+    //         exit(EXIT_FAILURE);
+    //     }
 
-        // if (reserved_va) {
-        //     mmap_next_start = reserved_va;
-        // }
-    }
+    //     // if (reserved_va) {
+    //     //     mmap_next_start = reserved_va;
+    //     // }
+    // }
     exec_func_init();
     cpu_loop(env);
     /* never exits */
@@ -6814,7 +6817,7 @@ static int do_fork_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         }
 
         ret = pthread_attr_init(&attr);
-        ret = pthread_attr_setstacksize(&attr, NEW_STACK_SIZE);
+        //ret = pthread_attr_setstacksize(&attr, NEW_STACK_SIZE);
         ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
         /* It is not safe to deliver signals until the child has finished
            initializing, so temporarily block all signals.  */
@@ -7077,9 +7080,11 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong child_tidptr)
 {
     static count = 0;
-    if (count != 0) {
-        //return do_fork_local(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
+    if (count != 0 &&0) {
+        // return do_fork_local(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
         //return do_fork_remote(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
+
+
         extern void offload_send_do_fork_info(int idx, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr);

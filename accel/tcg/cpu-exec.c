@@ -735,7 +735,7 @@ int cpu_exec(CPUState *cpu)
 
 #if 1
             // Debug 
-			if (tb->pc == 0x10128|| tb->pc == 0x127b6 || 1)
+			if (tb->pc == 0x10128|| tb->pc == 0x127b6)
 			{
 				//int32_t tmp[1];
 				//cpu_memory_rw_debug(cpu, 0x10324, tmp, 4, 1);

@@ -680,7 +680,7 @@ static void offload_send_start(void)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
-	if (offload_client_idx != 1) {
+	if (offload_client_idx != 1&&0) {
 		res = autoSend(1, net_buffer, (p - net_buffer), 0);
 		pthread_exit(0);
 		return;

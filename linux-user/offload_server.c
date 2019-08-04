@@ -264,6 +264,7 @@ static void load_memory_region(void)
 
 		int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
 							  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
 		//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
     }
 }
@@ -306,12 +307,12 @@ static void load_binary(void)
 	binary_end_address= *(uint32_t *)p;
 	p += sizeof(uint32_t);
 	static first = 1;
-	if (first||1) {
+	if (first) {
 		fprintf(stderr, "[load_binary]\tmap binary from %p to %x\n", binary_start_address, binary_end_address);
 		fprintf(stderr, "[load_binary]\there: %x %x %x\n", g2h(binary_start_address), g2h(binary_end_address), g2h((env->regs[15])));
 		
-		mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE);
-		
+		int ret = mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE);
+		fprintf(stderr, "[load_binary]\tRet = %p\n", ret);
 		memcpy(g2h(binary_start_address), p, (unsigned int)binary_end_address - binary_start_address);
 		
 		fprintf(stderr, "[load_binary]\there: %d\n", *(uint32_t *) g2h(env->regs[15]));
@@ -375,7 +376,7 @@ static void* exec_func(void *arg)
 	//pthread_mutex_unlock(&socket_mutex);
 	
 	//!! Just debug
-	//cpu_loop(env);
+	cpu_loop(env);
 	// here this thread reaches an end
 	
 		
@@ -386,7 +387,7 @@ static void* exec_func(void *arg)
 /* For extra exec. */
 void exec_func_init(void)
 {
-	
+	//guest_base = 0x3c00f000;
 	offload_mode = 6;
 	extern __thread int offload_thread_idx;
 	offload_thread_idx = 3;
@@ -401,7 +402,7 @@ void exec_func_init(void)
 		pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
 	}
 	pthread_mutex_unlock(&exec_func_init_mutex);
-
+	//guest_base = 0x3c00000;
 
 	fprintf(stderr, "[exec_func_init]\tStart Initializing... guest_base: %x\n", guest_base);
 
