@@ -20,6 +20,7 @@ int server_port_of(int idx)
 __thread int offload_mode;
 int offload_server_idx;
 __thread int offload_client_idx;
+__thread int offload_thread_idx;
 
 
 
@@ -29,6 +30,7 @@ __thread int offload_client_idx;
 #define PRTCTRL_YELLO "\e[0;33m"
 #define PRTCTRL_BLUE "\e[0;34m"
 #define PRTCTRL_CYN "\e[0;36m"
+#define PRTCTRL_PURPLE "\e[0;35m"
 #define DEBUG 0
 void offload_log(FILE *f, const char *c, ...)
 {
@@ -60,6 +62,10 @@ void offload_log(FILE *f, const char *c, ...)
 	else if (offload_mode == 5)
 	{
 		sprintf(tmp, PRTCTRL_CYN "[client thread #%d]%d:%d:%d\t", offload_client_idx, timeMin, timeSec, t.millitm);
+	}
+	else if (offload_mode == 6)
+	{
+		sprintf(tmp, PRTCTRL_PURPLE "[client thread #%d]%d:%d:%d\t", offload_thread_idx, timeMin, timeSec, t.millitm);
 	}
 	strcat(tmp, c);
 	strcat(tmp, PRTCTRL_NONE);

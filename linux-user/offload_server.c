@@ -47,6 +47,7 @@ static void load_brk(void);
 static void load_memory_region(void);
 static void* exec_func(void *arg);
 static void offload_server_process_futex_wait_result(void);
+static void offload_process_fork_info(void);
 static void offload_server_send_futex_wait_request(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 int offload_server_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_send_page_request(target_ulong page_addr, uint32_t perm);
@@ -84,6 +85,7 @@ int syscall_clone_done;
 pthread_mutex_t syscall_clone_mutex;
 pthread_cond_t syscall_clone_cond;
 static int futex_uaddr_changed_flag; static pthread_mutex_t futex_mutex; static pthread_cond_t futex_cond;
+static int exec_ready_to_init; static pthread_mutex_t exec_func_init_mutex; static pthread_cond_t exec_func_init_cond;
 static void* exec_segfault_addr; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
 static int syscall_time_sum;
@@ -146,6 +148,8 @@ static void offload_server_init(void)
 	pthread_mutex_init(&syscall_recv_cond,NULL);
 	pthread_mutex_init(&futex_mutex, NULL);
 	pthread_cond_init(&futex_cond, NULL);
+	pthread_mutex_init(&exec_func_init_mutex, NULL);
+	pthread_cond_init(&exec_func_init_cond, NULL);
 	pgfault_time_sum = 0;
 
 }
@@ -302,7 +306,7 @@ static void load_binary(void)
 	binary_end_address= *(uint32_t *)p;
 	p += sizeof(uint32_t);
 	static first = 1;
-	if (first) {
+	if (first||1) {
 		fprintf(stderr, "[load_binary]\tmap binary from %p to %x\n", binary_start_address, binary_end_address);
 		fprintf(stderr, "[load_binary]\there: %x %x %x\n", g2h(binary_start_address), g2h(binary_end_address), g2h((env->regs[15])));
 		
@@ -315,9 +319,10 @@ static void load_binary(void)
 
 		fprintf(stderr, "[load_binary]\tcode: %x", *((uint32_t *) g2h(0x102fa)));
 		mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE | PROT_EXEC);
+		first = 0;
 	}
 	else {
-		first = 0;
+		
 	}
 	p += (unsigned int)binary_end_address-binary_start_address;
 }
@@ -327,6 +332,7 @@ static void* exec_func(void *arg)
 {
 	
 	offload_mode = 3;
+
 	//pthread_mutex_lock(&socket_mutex);
 	static int first = 1;
 	if (first == 1) {
@@ -351,14 +357,75 @@ static void* exec_func(void *arg)
 	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
 	fprintf(stderr, "[exec_func]\tready to CPU_LOOP\n");
 
-	fprintf(stderr, "[exec_func]\tPC: %d\n", env->regs[15]);
+	fprintf(stderr, "[exec_func]\tPC: %p\n", env->regs[15]);
 	
 	
 	fprintf(stderr, "[exec_func]\tregisters:\n");
 	
 	for (int i = 0; i < 16; i++)
 	{
-		fprintf(stderr, "[exec_func]\t%d\n", env->regs[i]);
+		fprintf(stderr, "[exec_func]\t%p\n", env->regs[i]);
+	}
+	//target_disas(stderr, ENV_GET_CPU(env), env->regs[15], 100);
+	//while (1) {;}
+
+	rcu_register_thread();
+	tcg_register_thread();
+
+	//pthread_mutex_unlock(&socket_mutex);
+	
+	//!! Just debug
+	//cpu_loop(env);
+	// here this thread reaches an end
+	
+		
+	return NULL;
+	 
+}
+
+/* For extra exec. */
+void exec_func_init(void)
+{
+	
+	offload_mode = 6;
+	extern __thread int offload_thread_idx;
+	offload_thread_idx = 3;
+	fprintf(stderr, "[exec_func_init]\tWaiting for informations...\n");
+	/* Once the thread reaches here, set the exec_read_to_init to 1.
+	 * wait the flag to be 2 indicating initialization info is ready. */
+	pthread_mutex_lock(&exec_func_init_mutex);
+	exec_ready_to_init = 1;
+	pthread_cond_broadcast(&exec_func_init_cond);
+	while (exec_ready_to_init != 2) {
+		fprintf(stderr, "[exec_func_init]\tWaiting for informations...NOT READY%d\n", exec_ready_to_init);
+		pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
+	}
+	pthread_mutex_unlock(&exec_func_init_mutex);
+
+
+	fprintf(stderr, "[exec_func_init]\tStart Initializing... guest_base: %x\n", guest_base);
+
+	
+	p = net_buffer;
+	fprintf(stderr, "[exec_func_init]\tin exec func\n");
+	load_cpu();
+	// copy the start function address
+	;
+	load_memory_region();
+	load_brk();
+	load_binary();
+	// it's go time!
+	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
+	fprintf(stderr, "[exec_func_init]\tready to CPU_LOOP\n");
+
+	fprintf(stderr, "[exec_func_init]\tPC: %p\n", env->regs[15]);
+	
+	
+	fprintf(stderr, "[exec_func_init]\tregisters:\n");
+	
+	for (int i = 0; i < 16; i++)
+	{
+		fprintf(stderr, "[exec_func_init]\t%p\n", env->regs[i]);
 	}
 	//target_disas(stderr, ENV_GET_CPU(env), env->regs[15], 100);
 	//while (1) {;}
@@ -407,10 +474,24 @@ void * cpu_killer(void* param)
 static void offload_process_start(void)
 {
 	
-
+	static int count = 0;
 	pthread_t exec_thread;
 	fprintf(stderr, "[offload_process_start]\tcreate exec thread\n");
-	pthread_create(&exec_thread, NULL, exec_func, NULL);
+	if (count == 0) {
+		pthread_create(&exec_thread, NULL, exec_func, NULL);
+		count++;
+	}
+	else {
+		pthread_mutex_lock(&exec_func_init_mutex);
+		while (exec_ready_to_init != 1) {
+			pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
+		}
+		exec_ready_to_init = 2;
+		pthread_cond_broadcast(&exec_func_init_cond);
+		fprintf(stderr, "[offload_process_start]\tWake up please! %d\n", exec_ready_to_init);
+		pthread_mutex_unlock(&exec_func_init_mutex);
+		
+	}
 	fprintf(stderr, "[offload_process_start]\texec thread created\n");
 	/*
 	pthread_t killer_thread;
@@ -984,6 +1065,12 @@ static void offload_server_daemonize(void)
 				try_recv(size);
 				offload_process_tid();
 				break;
+
+			case TAG_OFFLOAD_FORK_INFO:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: FORK INFO, size = %d\n", size);
+				try_recv(size);
+				offload_process_fork_info();
+				break;
 			default:
 				fprintf(stderr, "[offload_server_daemonize]\tunkown tag: %d\n", tag);
 				try_recv(size);
@@ -1319,6 +1406,33 @@ static void offload_process_tid(void)
 	ts = cpu->opaque;
 	ts->child_tidptr = tid;
 	fprintf(stderr,"[offload_process_tid]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+}
+
+
+static void offload_process_fork_info(void)
+{
+	p = net_buffer;
+	unsigned int flags = *((unsigned int*)p);
+	p += sizeof(unsigned int);
+	abi_ulong newsp = *((abi_ulong*)p);
+	p += sizeof(abi_ulong);
+	abi_ulong parent_tidptr = *((abi_ulong*)p);
+	p += sizeof(abi_ulong);
+	target_ulong newtls = *((target_ulong*)p);
+	p += sizeof(target_ulong);
+	abi_ulong child_tidptr = *((abi_ulong*)p);
+	p += sizeof(abi_ulong);
+
+	fprintf(stderr,"[offload_process_fork_info]\tdoing fork local\n");
+	extern int do_fork_server_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
+                   abi_ulong parent_tidptr, target_ulong newtls,
+                   abi_ulong child_tidptr);
+	extern CPUArchState *env;
+	do_fork_server_local( env,   flags,  newsp,
+                    parent_tidptr,  newtls,
+                    child_tidptr);
+	fprintf(stderr,"[offload_process_fork_info]\tDone.\n");
+
 }
 
 

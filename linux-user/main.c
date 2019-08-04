@@ -850,10 +850,14 @@ void offload_server_extra_init(void)
     TaskState *ts;
     //CPUArchState *env;
     CPUState *cpu;
+
+    
     cpu = cpu_create(cpu_type);
     cpu_reset(cpu);
+
     fprintf(stderr, "[server]\tenv set to addr %p\n", env);
     thread_cpu = cpu;
+
     return;
 }
 

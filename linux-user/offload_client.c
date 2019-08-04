@@ -654,6 +654,11 @@ static void dump_cpu(void)
 	p += sizeof(TaskState);
 }
 
+/* Offload the following guest thread to slave node. */
+static void offload_send_extra_start(int idx)
+{
+
+}
 /* Dump the informations and send to slave QEMU. */
 static void offload_send_start(void)
 {
@@ -665,7 +670,7 @@ static void offload_send_start(void)
 	fprintf(stderr, "[offload_send_start]\tregisters:\n");
 	for (int i = 0; i < 16; i++)
 	{
-		fprintf(stderr, "%d\n", client_env->regs[i]);
+		fprintf(stderr, "%p\n", client_env->regs[i]);
 	}
 	dump_self_maps();
 	dump_brk();
@@ -676,7 +681,7 @@ static void offload_send_start(void)
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
 	if (offload_client_idx != 1) {
-		res = autoSend(0, net_buffer, (p - net_buffer), 0);
+		res = autoSend(1, net_buffer, (p - net_buffer), 0);
 		pthread_exit(0);
 		return;
 	}
@@ -2225,6 +2230,36 @@ static void offload_send_syscall_result(int idx, abi_long result)
 	autoSend(idx, buf, pp - buf, 0);
     fprintf(stderr, "[offload_send_syscall_result]\tsent syscall result to #%d packet#%d with ret=%p\n", idx,
             get_number(), result);
+}
+
+/* do_fork information */
+/* static int do_fork_remote(CPUArchState *env, unsigned int flags, abi_ulong newsp,
+                   abi_ulong parent_tidptr, target_ulong newtls,
+                   abi_ulong child_tidptr)
+*/
+void offload_send_do_fork_info(int idx, unsigned int flags, abi_ulong newsp,
+                   abi_ulong parent_tidptr, target_ulong newtls,
+                   abi_ulong child_tidptr)
+{
+	fprintf(stderr, "[offload_send_do_fork_info]\tsending do fork info to #%d\n", idx);
+	char buf[TARGET_PAGE_SIZE * 2];
+	char *pp = buf + sizeof(struct tcp_msg_header);
+	*((unsigned int*)pp) = flags;
+	pp += sizeof(unsigned int);
+	*((abi_ulong*)pp) = newsp;
+	pp += sizeof(abi_ulong);
+	*((abi_ulong*)pp) = parent_tidptr;
+	pp += sizeof(abi_ulong);
+	*((target_ulong*)pp) = newtls;
+	pp += sizeof(target_ulong);
+	*((abi_ulong*)pp) = child_tidptr;
+	pp += sizeof(abi_ulong);
+	    fprintf(stderr, "[do_fork_server_local]\t flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
+                                                 flags, newsp, parent_tidptr, newtls, child_tidptr);
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
+	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FORK_INFO);
+	autoSend(idx, buf, pp - buf, 0);
+    fprintf(stderr, "[offload_send_do_fork_info]\tsent do fork info to #%d\n", idx);
 }
 
 static void show_prefetch_list(int idx)

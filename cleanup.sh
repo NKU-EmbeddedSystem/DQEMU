@@ -1,1 +1,1 @@
-killall sh time qemu-arm
+killall -9 sh time qemu-arm
