@@ -1132,7 +1132,7 @@ static void offload_process_page_request(void)
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
 	fprintf(log, "%d\t%p\t%d\n", offload_client_idx, page_addr, perm);
 	/* Check if already in prefetch list */
-	int isInPrefetch = prefetch_check(page_addr, offload_client_idx);
+	int isInPrefetch = (perm == 2)? 0 : prefetch_check(page_addr, offload_client_idx);
 	// if (isInPrefetch<0)
 	// {
 	// 	sleep(0.5);
@@ -1148,11 +1148,13 @@ static void offload_process_page_request(void)
 		int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
 		/* limit the prefetch count to avoid too much thread at a time */
 		prefetch_count = prefetch_count > 500 ? 500 : prefetch_count;
-		
-		if (prefetch_count > 0) {
+		if (prefetch_count < 0) {
+			
+		}
+		if (prefetch_count > 0 && perm == 2) {
 			fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
 			for (int i = 0; i < prefetch_count; i++) {
-				offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, perm);
+				offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, 1);
 			}
 		}
 	}
@@ -2318,11 +2320,14 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 			p->life += PREFETCH_LIFE;
 			if (++p->page_hit_count >= 10) {
 				fprintf(stderr, "[prefetch_handler]\tConflict page %p found! Not implemented!\n", page_addr);
+				
+				//return 0;
 			}
 			pre = p;
 			p = p->next;
-			return 0;
+			ret = -1;
 		}
+		else
 		// search **all** for wait_addr and dec others' life
 		// Miss
 		if (p->wait_addr != page_addr) {
@@ -2352,7 +2357,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		p = psave;
         fprintf(stderr, "[prefetch_handler]\tWait addr %p of page %p found!\n", page_addr, p->page_addr);
         p->wait_hit_count++;
-		if (p->wait_hit_count < 4)  				// not started
+		if (p->wait_hit_count < 2)  				// not started
         {
 			p->wait_addr = page_addr + PAGE_SIZE;		// wait at next page
             p->life = 100;
@@ -2372,7 +2377,12 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		}
 
 	}
-	else {		// add new node
+	else {	
+		/* confilct page */
+		if (ret < 0) {
+			return -1;
+		}
+			// add new node
         fprintf(stderr, "[prefetch_handler]\tAdd new node %p!\n", page_addr);
 		p = (struct pgft_record*)malloc(sizeof(struct pgft_record));
 		memset(p, 0, sizeof(struct pgft_record));
