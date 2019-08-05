@@ -53,7 +53,7 @@ void offload_log(FILE *f, const char *c, ...)
 	}
 	else if (offload_mode == 3)
 	{
-		sprintf(tmp, PRTCTRL_YELLO "[exec #%d]%d:%d:%d\t", offload_server_idx, timeMin, timeSec, t.millitm);
+		sprintf(tmp, PRTCTRL_YELLO "[exec #%d->%d]%d:%d:%d\t", offload_server_idx, offload_thread_idx, timeMin, timeSec, t.millitm);
 	}
 	else if (offload_mode == 4)
 	{
@@ -65,7 +65,7 @@ void offload_log(FILE *f, const char *c, ...)
 	}
 	else if (offload_mode == 6)
 	{
-		sprintf(tmp, PRTCTRL_PURPLE "[client thread #%d]%d:%d:%d\t", offload_thread_idx, timeMin, timeSec, t.millitm);
+		sprintf(tmp, PRTCTRL_PURPLE "[exec #%d->%d]%d:%d:%d\t", offload_server_idx, offload_thread_idx, timeMin, timeSec, t.millitm);
 	}
 	strcat(tmp, c);
 	strcat(tmp, PRTCTRL_NONE);

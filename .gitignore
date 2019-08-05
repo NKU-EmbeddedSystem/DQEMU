@@ -878,3 +878,4 @@ capstone/include/CMakeLists.txt
 compile_commands.json
 *.txt
 core
+a.out

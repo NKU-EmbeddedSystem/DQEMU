@@ -4,10 +4,10 @@
 
 #define MAP_PAGE_BITS 12
 // prefetch
-#define MAX_WORKER 32
+#define MAX_WORKER 16
 #define PREFETCH_PAGE_MAX 1000
 #define PREFETCH_LAUNCH_VALVE 4
-#define PREFETCH_LIFE 20
+#define PREFETCH_LIFE 80
 #define PREFETCH_BEGIN_PAGE_COUNT 10
 
 //#define _ATFILE_SOURCE
@@ -105,18 +105,21 @@
 static void offload_send_mutex_verified(int);
 
 static void offload_process_mutex_done(void);
-static void offload_send_syscall_result(int,abi_long);
+static void offload_send_syscall_result(int,abi_long,int);
 static void offload_process_syscall_request(void);
 static void offload_send_tid(int idx, uint32_t tid);
 //futexes
-static void futex_table_wake(uint32_t futex_addr, int num, int);
+static void futex_table_wake(uint32_t futex_addr, int num, int idx, int thread_id);
 static void print_futex_table();
-static void futex_table_add(uint32_t futex_addr, int idx);
+static void futex_table_add(uint32_t futex_addr, int idx, int thread_id);
 static int try_recv(int);
 static int communication_send_sum, communication_recv_sum;
 static pthread_mutex_t g_cas_mutex = PTHREAD_MUTEX_INITIALIZER;
 extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
+extern int thread_pos[32];
 int syscall_started_flag;
+int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2,
+							uint32_t uaddr2, int val3, int idx, int thread_id);
 //int requestor_idx, target_ulong addr, int perm
 struct info
 {
@@ -137,6 +140,7 @@ struct syscall_param
 	abi_long arg7;
 	abi_long arg8;
 	int idx;
+	int thread_id;
 };
 
 struct syscall_param* syscall_global_pointer;
@@ -145,6 +149,7 @@ static int testint = 233;
 struct Node
 {
 	int val;
+	int thread_id;
 	struct Node * next;
 };
 struct futex_record
@@ -177,14 +182,14 @@ static void show_prefetch_list(int idx);
 
 #define fprintf offload_log
 
-#define MUTEX_LIST_MAX 32
-#define FUTEX_RECORD_MAX 32
+//#define MUTEX_LIST_MAX 32
+#define FUTEX_RECORD_MAX 16
 
-#define WORKER_COUNT 32
+//#define FUTEX_RECORD_MAX 32
 
 static __thread char net_buffer[NET_BUFFER_SIZE];
 
-static target_ulong mutex_list[MUTEX_LIST_MAX] = {0};
+static target_ulong mutex_list[FUTEX_RECORD_MAX] = {0};
 
 // |mutex address|holder|requestor list|pending flag|
 struct MutexTuple
@@ -192,12 +197,12 @@ struct MutexTuple
 	uint32_t mutexAddr;
 	uint32_t holderId;
 	bool hasPending;
-	uint32_t pendingList[WORKER_COUNT];	//TODO: SHOULD BE INT!!! BECAUSE CLIENT STARTS WITH #0!!!!!!
+	uint32_t pendingList[FUTEX_RECORD_MAX];	//TODO: SHOULD BE INT!!! BECAUSE CLIENT STARTS WITH #0!!!!!!
 	int tail;	// behave as a list
 	int head;
 };
 
-static struct MutexTuple MutexList[MUTEX_LIST_MAX];
+static struct MutexTuple MutexList[FUTEX_RECORD_MAX];
 FILE *log;
 typedef struct cas_record
 {
@@ -446,8 +451,7 @@ static void offload_client_init(void)
 	//struct timeval timeout={1, 0};
 	//int ret = setsockopt(skt[offload_client_idx], SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
 
-	futex_table = (struct futex_record*)malloc(FUTEX_RECORD_MAX*sizeof(struct futex_record));
-	memset(futex_table, 0, FUTEX_RECORD_MAX * sizeof(struct futex_record));
+	
 
 	pthread_mutex_init(&page_recv_mutex, NULL);
 	pthread_cond_init(&page_recv_cond, NULL);
@@ -680,9 +684,9 @@ static void offload_send_start(void)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
-	if (offload_client_idx != 1&&0) {
+	if (offload_client_idx != 1) {
 		res = autoSend(1, net_buffer, (p - net_buffer), 0);
-		pthread_exit(0);
+		//pthread_exit(0);
 		return;
 	}
 	res = autoSend(offload_client_idx, net_buffer, (p - net_buffer), 0);
@@ -944,14 +948,14 @@ static void offload_show_mutex_list(void)
 {
 	char buf[1024];
 	int i = 0;
-	for (;i<MUTEX_LIST_MAX;i++)
+	for (;i<FUTEX_RECORD_MAX;i++)
 	{
 		sprintf(buf, "%smutex %d: %p holder: #%d %s\n",buf, i, MutexList[i].mutexAddr, MutexList[i].holderId, MutexList[i].hasPending?"pending":"free");
 		int j = 0;
 		if (MutexList[i].hasPending)
 		{
 			sprintf(buf, "%shead: %d, tail: %d", buf, MutexList[i].head, MutexList[i].tail);
-			for (; j < WORKER_COUNT; j++)
+			for (; j < FUTEX_RECORD_MAX; j++)
 			{
 				sprintf(buf, "%s\t%d", buf, MutexList[i].pendingList[j]);
 			}
@@ -1320,12 +1324,14 @@ void* offload_center_client_start(void *arg)
 	pthread_mutex_lock(&offload_center_init_mutex);
 	pthread_cond_signal(&offload_center_init_cond);
 	pthread_mutex_unlock(&offload_center_init_mutex);
+	futex_table = (struct futex_record*)malloc(FUTEX_RECORD_MAX*sizeof(struct futex_record));
+	memset(futex_table, 0, FUTEX_RECORD_MAX * sizeof(struct futex_record));
 	offload_client_daemonize();
 	close_network();
 	return NULL;
 }
 
-static void futex_table_add(uint32_t futex_addr, int idx)
+static void futex_table_add(uint32_t futex_addr, int idx, int thread_id)
 {
 	fprintf(stderr, "[futex_table_add]\tadding futex_addr = %p, idx = %d\n", futex_addr, idx);
 
@@ -1333,28 +1339,30 @@ static void futex_table_add(uint32_t futex_addr, int idx)
 	struct Node * p = (struct Node*)malloc(sizeof(struct Node));
 	memset(p, 0, sizeof(struct Node));
 	p->val = idx;
+	p->thread_id = thread_id;
 	int i = 0;
-	int j = 0;
+	//int j = 0;
 	fprintf(stderr, "[futex_table_add]\ttest point1\n");
-	// find a
-	while ((futex_table[i].isInUse) && (futex_table[i].futex_addr != futex_addr))
+	/* Find a matching record. */
+	for (; i < FUTEX_RECORD_MAX; i++)
 	{
-		i++;
-		if (i == FUTEX_RECORD_MAX)
-		{
-			fprintf(stderr, "[futex_table_add]\tFatal error: futex_table full! Please add more space.\n");
-			exit(-1);
-		}
-	}
-
-	// if the former record has been cleaned
-	for (; j < FUTEX_RECORD_MAX; j++)
-	{
-		if ((futex_table[j].isInUse==1)&&(futex_table[j].futex_addr==futex_addr))
+		if ((futex_table[i].isInUse==1)&&(futex_table[i].futex_addr==futex_addr))
 			break;
 	}
-	if (j != FUTEX_RECORD_MAX)
-		i = j;
+	/* If no matching record, find a new position. */
+	if (i == FUTEX_RECORD_MAX) {
+		/* find a spare position */
+		i = 0;
+		while (futex_table[i].isInUse)
+		{
+			i++;
+			if (i == FUTEX_RECORD_MAX)
+			{
+				fprintf(stderr, "[futex_table_add]\tFatal error: futex_table full! Please add more space.\n");
+				exit(232);
+			}
+		}
+	}	
 	// make sure list is not full
 
 	// insert
@@ -1382,11 +1390,12 @@ static void print_futex_table()
 	char tmp[200];
 	struct futex_record * p;
 	struct Node * pnode;
+	memset(buf, 0, sizeof(buf));
 	for (; i < FUTEX_RECORD_MAX; i++)
 	{
 		p = &futex_table[i];
 		//fprintf(stderr, "[print_futex_table]\ttest point1\n");
-		sprintf(tmp, "\n[%d]futex_addr: %p, isInUse: %d", i, p->futex_addr, p->isInUse);
+		sprintf(tmp, "\n[%d]futex_addr: %p, isInUse: %s", i, p->futex_addr, (p->isInUse) ? "Yes" : "No");
 		strcat(buf, tmp);
 		//fprintf(stderr, "[print_futex_table]\ttest point2\n");
 		if (p->isInUse)
@@ -1395,7 +1404,7 @@ static void print_futex_table()
 			//fprintf(stderr, "[print_futex_table]\ttest point3.1, val = %d, next\n", pnode->val);
 			while (pnode)
 			{
-				sprintf(tmp, "  %d", pnode->val);
+				sprintf(tmp, "  %d->%d", pnode->val, pnode->thread_id);
 				strcat(buf, tmp);
 				pnode = pnode->next;
 			}
@@ -1431,14 +1440,14 @@ static struct futex_record * futex_table_find(uint32_t futex_addr)
 	return pr;
 }
 
-static void futex_table_wake(uint32_t futex_addr, int num, int idx)
+static void futex_table_wake(uint32_t futex_addr, int num, int idx, int thread_id)
 {
 	fprintf(stderr, "[futex_table_wake]\tWaking up futex on %p, num = %d\n", futex_addr, num);
 	print_futex_table();
 
 	struct futex_record *pr = futex_table_find(futex_addr);
 	if (!pr) {
-		offload_send_syscall_result(idx, 0);
+		offload_send_syscall_result(idx, 0, thread_id);
 		return;
 	}
 	// wake up all servers
@@ -1449,7 +1458,7 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx)
 		// wasn't woken up by timer
 		if (pnode->val>=0) {
 			count++;
-			offload_send_syscall_result(pnode->val, 0);
+			offload_send_syscall_result(pnode->val, 0, pnode->thread_id);
 		}
 		tmp = pnode;
 		pnode = pnode->next;
@@ -1469,7 +1478,7 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx)
 		pr->head = NULL;
 	}
 	print_futex_table();
-	offload_send_syscall_result(idx, count);
+	offload_send_syscall_result(idx, count, thread_id);
 }
 
 /*        FUTEX_CMP_REQUEUE (since Linux 2.6.7)
@@ -1505,36 +1514,37 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx)
 
 */
 int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2,
-							uint32_t uaddr2, int val3, int idx)
+							uint32_t uaddr2, int val3, int idx, int thread_id)
 {
-	fprintf(stderr, "[futex_table_cmp_requeue]\tuaddr %p, futex_op %p, val %p, val2 %p, uaddr2 %p, val3 %p of idx %d\n",
-			uaddr, futex_op, val, val2, uaddr2, val3, idx);
+	fprintf(stderr, "[futex_table_cmp_requeue]\tuaddr %p, futex_op %p, val %p, val2 %p, uaddr2 %p, val3 %p of idx %d->%d\n",
+			uaddr, futex_op, val, val2, uaddr2, val3, idx, thread_id);
 	print_futex_table();
 	offload_segfault_handler_positive(uaddr, 1);
 	if (*(int *)(g2h(uaddr)) != val3)
 	{
-		fprintf(stderr, "[futex_table_cmp_requeue]\t*(int*)(futex_addr) != cmpval, returning with EAGAIN...%p\n", TARGET_EAGAIN);
-		offload_send_syscall_result(idx, TARGET_EAGAIN);
+		fprintf(stderr, "[futex_table_cmp_requeue]\t*(int*)(futex_addr) == %d != cmpval, returning with EAGAIN...%p\n", *(int *)(g2h(uaddr)), TARGET_EAGAIN);
+		offload_send_syscall_result(idx, TARGET_EAGAIN, thread_id);
 		return TARGET_EAGAIN;
 	}
 	struct futex_record *pr = futex_table_find(uaddr);
+	/* If there is not a matching record, return 0. */
 	if (!pr) {
 		fprintf(stderr, "[futex_table_cmp_requeue]\tpr == %p, returning...\n", pr);
-		offload_send_syscall_result(idx, 0);
+		offload_send_syscall_result(idx, 0, thread_id);
 		return 0;
 	}
-	// wake up all servers
+	/* wake up all threads */
 	struct Node *pnode = pr->head, *tmp;
 	int count_wake = 0;
 	int count_requeue = 0;
 	while (pnode)
 	{
-		fprintf(stderr, "[futex_table_cmp_requeue]\twaking up #%d\n", pnode->val);
-		// wasn't woken up by timer
+		fprintf(stderr, "[futex_table_cmp_requeue]\twaking up #%d->%d\n", pnode->val, pnode->thread_id);
+		/* It isn't woken up by timer, so count ++ */
 		if (pnode->val >= 0)
 		{
 			count_wake++;
-			offload_send_syscall_result(pnode->val, 0);
+			offload_send_syscall_result(pnode->val, 0, pnode->thread_id);
 		}
 		tmp = pnode;
 		pnode = pnode->next;
@@ -1543,7 +1553,7 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 			break;
 	}
 	// Clean up
-	if (pnode) //if val < number of waiters -> there is someone left, move to new queue
+	if (pnode) /* If val is less than the number of waiters, then there is someone left, move it to new queue */
 	{
 		pr->head = pnode;
 		struct futex_record *dup = futex_table_find(uaddr2);
@@ -1572,6 +1582,7 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 				pr->head = NULL;
 			}
 			else {
+				/* Move the `begin to end` from uaddr1 to uaddr2 */
 				pr->head = end->next;
 				end->next = dup->head;
 				dup->head = begin;
@@ -1588,7 +1599,7 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 	}
 	print_futex_table();
 	int res = count_wake > count_requeue ? count_wake : count_requeue;
-	offload_send_syscall_result(idx, res);
+	offload_send_syscall_result(idx, res, thread_id);
 	return res;
 }
 
@@ -1651,7 +1662,8 @@ void syscall_daemonize(void)
 		abi_long arg7 = syscall_p->arg7;
 		abi_long arg8 = syscall_p->arg8;
 		int idx = syscall_p->idx;
-		fprintf(stderr, "[syscall_daemonize]\tprocessing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n", idx, arg1, arg2, arg3);
+		int thread_id = syscall_p->thread_id;
+		fprintf(stderr, "[syscall_daemonize]\tprocessing passed syscall from %d->%d, arg1: %p, arg2:%p, arg3:%p\n", idx, thread_id, arg1, arg2, arg3);
 		extern void print_syscall(int num,
 				abi_long arg1, abi_long arg2, abi_long arg3,
 				abi_long arg4, abi_long arg5, abi_long arg6);
@@ -1701,20 +1713,21 @@ void syscall_daemonize(void)
 			offload_segfault_handler_positive(futex_addr, 1);
 			if (*(int*)(g2h(futex_addr)) == cmpval)
 			{
-				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr) == cmpval, adding to futex table\n");
-				futex_table_add(futex_addr, idx);
+				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr) == cmpval == %p, adding to futex table\n", *(int*)(g2h(futex_addr)));
+				futex_table_add(futex_addr, idx, thread_id);
 				// // DEBUG
 				// sleep(1);
 				// offload_send_syscall_result(idx, 0);
+				// TODO implement time wait
 				if (arg4 != NULL) {
 					fprintf(stderr, "[syscall_daemonize]\ttime FUTEX_WAIT not implemented!\n");
-					exit(-1);
+					exit(122);
 				}
 			}
 			else
 			{
 				fprintf(stderr, "[syscall_daemonize]\t*(int*)(futex_addr = %p)!= cmpval = %p, ignoring...\n", *(int *)(g2h(futex_addr)), cmpval);
-				offload_send_syscall_result(idx, TARGET_EAGAIN);
+				offload_send_syscall_result(idx, TARGET_EAGAIN, thread_id);
 			}
 		}
 		// futex_wake
@@ -1739,10 +1752,10 @@ void syscall_daemonize(void)
 			if (isChildEnd == 1)
 			{
 				fprintf(stderr, "[syscall_daemonize]\tChild End!\n");
-				offload_segfault_handler_positive(futex_addr, 1);
+				offload_segfault_handler_positive(futex_addr, 2);
 				*(int*)g2h(futex_addr) = 0;
 			}
-			futex_table_wake(futex_addr, wakeup_num, idx);
+			futex_table_wake(futex_addr, wakeup_num, idx, thread_id);
 		}
 		/*        FUTEX_CMP_REQUEUE (since Linux 2.6.7)
 		*/
@@ -1750,14 +1763,16 @@ void syscall_daemonize(void)
 			&& ((arg2 == (FUTEX_PRIVATE_FLAG|FUTEX_CMP_REQUEUE)) || (arg2 ==FUTEX_CMP_REQUEUE)))
 		{
 			fprintf(stderr, "[syscall_daemonize]\treceived FUTEX_PRIVATE_FLAG|FUTEX_CMP_REQUEUE, %p, %p, %d, arg8: %d\n", FUTEX_PRIVATE_FLAG | FUTEX_WAKE, arg2, arg2 == 0x81 ? 1 : 0, arg8);
-			futex_table_cmp_requeue(arg1, arg2, arg3, arg4, arg5, arg6, idx);
+			futex_table_cmp_requeue(arg1, arg2, arg3, arg4, arg5, arg6, idx, thread_id);
 		}
 		else
 		{
+			/* Common syscalls. */
 			if ((num == TARGET_NR_write)) {
 				offload_segfault_handler_positive(arg2, 1);
 				fprintf(stderr, "[syscall_daemonize]\tfetching write, %d %c %d\n", arg1, *(char*)g2h(arg2), arg3);
 			}
+			print_futex_table();
 			extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 							abi_long arg2, abi_long arg3, abi_long arg4,
 							abi_long arg5, abi_long arg6, abi_long arg7,
@@ -1771,12 +1786,10 @@ void syscall_daemonize(void)
 						arg5,
 						arg6,
 						0, 0);
-			offload_send_syscall_result(idx, ret);
+			offload_send_syscall_result(idx, ret, thread_id);
 		}
 		free(syscall_p->cpu_env);
 		free(syscall_p);
-
-
 
 		fprintf(stderr, "[syscall_daemonize]\tcleaning up\n");
 		do_syscall_flag = 0;
@@ -1819,6 +1832,7 @@ void offload_client_start(CPUArchState *the_env)
 	int res;
 	client_env = the_env;
 	offload_send_start();
+	fprintf(stderr, "[offload_client_start]\tSent. returning..\n");
 	return;
 }
 
@@ -2156,18 +2170,20 @@ void* process_syscall_thread(void* syscall_pp)
 	abi_long arg7 = syscall_p->arg7;
 	abi_long arg8 = syscall_p->arg8;
 	int idx = syscall_p->idx;
+	int thread_id = syscall_p->thread_id;
 
 	syscall_global_pointer = syscall_p;
 	do_syscall_flag = 1;
     fprintf(stderr,
-            "[process_syscall_thread]\t I am thread. processing passed syscall from %d, arg1: %p, arg2:%p, arg3:%p\n",
-            idx, arg1, arg2, arg3);
+            "[process_syscall_thread]\t I am thread. processing passed syscall from %d->%d, arg1: %p, arg2:%p, arg3:%p\n",
+            idx, thread_id, arg1, arg2, arg3);
 
 	fprintf(stderr, "[process_syscall_thread]\twaking up &locking syscall_thread\n");
 	pthread_cond_signal(&do_syscall_cond);
 	fprintf(stderr, "[process_syscall_thread]\texiting mutex\n");
 	pthread_mutex_unlock(&do_syscall_mutex);
 	fprintf(stderr, "[process_syscall_thread]\twoke up, done.\n");
+	return NULL;
 }
 
 static void offload_process_syscall_request(void)
@@ -2197,6 +2213,9 @@ static void offload_process_syscall_request(void)
 	abi_long arg8 = *((uint32_t*) p);
 	p += sizeof(abi_long);
 	int idx = *(int*) p;
+	p += sizeof(int);
+	int thread_id = *(int*)p;
+	p += sizeof(int);
 	struct syscall_param* syscall_p = (struct syscall_param*)malloc(sizeof(struct syscall_param));
 	syscall_p->cpu_env = env;
 	syscall_p->num = num;
@@ -2209,29 +2228,37 @@ static void offload_process_syscall_request(void)
 	syscall_p->arg7 = arg7;
 	syscall_p->arg8 = arg8;
 	syscall_p->idx = idx;
-
+	syscall_p->thread_id = thread_id;
 
     fprintf(stderr,
-            "[offload_process_syscall_request]\treceived passed syscall to center from %d, arg1: %p, arg2:%p, arg3:%p,CREATING THREAD\n",
-            idx, arg1, arg2, arg3);
+            "[offload_process_syscall_request]\treceived passed syscall to center from %d->%d, arg1: %p, arg2:%p, arg3:%p,CREATING THREAD\n",
+            idx, thread_id, arg1, arg2, arg3);
 
 
 	pthread_t syscall_thread;
-	pthread_create(&syscall_thread,NULL,process_syscall_thread,(void*)syscall_p);
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	if (pthread_create(&syscall_thread,&attr,process_syscall_thread,(void*)syscall_p) != 0) {
+		perror("pthread_create");
+		exit(19);
+	}
 }
 
-static void offload_send_syscall_result(int idx, abi_long result)
+static void offload_send_syscall_result(int idx, abi_long result, int thread_id)
 {
-	fprintf(stderr, "[offload_send_syscall_result]\tsending syscall result to #%d with ret=%p\n", idx, result);
+	fprintf(stderr, "[offload_send_syscall_result]\tsending syscall result to #%d->%d with ret=%p\n", idx, thread_id, result);
 	char buf[TARGET_PAGE_SIZE * 2];
 	char *pp = buf + sizeof(struct tcp_msg_header);
 	*((abi_long*)pp) = result;
 	pp += sizeof(abi_long);
+	*((int*)pp) = thread_id;
+	pp += sizeof(int);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_RES);
 	autoSend(idx, buf, pp - buf, 0);
-    fprintf(stderr, "[offload_send_syscall_result]\tsent syscall result to #%d packet#%d with ret=%p\n", idx,
-            get_number(), result);
+    fprintf(stderr, "[offload_send_syscall_result]\tsent syscall result to #%d->%d\n", idx,
+            thread_id);
 }
 
 /* do_fork information */

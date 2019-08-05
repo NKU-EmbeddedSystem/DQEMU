@@ -660,7 +660,7 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
     }
 #endif
 }
-extern int offload_mode;
+extern __thread int offload_mode;
 /* main execution loop */
 extern TCGv_i64 cpu_exclusive_val;//Debug use
 int cpu_exec(CPUState *cpu)
@@ -735,7 +735,8 @@ int cpu_exec(CPUState *cpu)
 
 #if 1
             // Debug 
-			if (tb->pc == 0x10128|| tb->pc == 0x127b6)
+            extern __thread int offload_mode;
+			if (tb->pc == 0x10128|| tb->pc == 0x127b6)// || (offload_mode == 6 && tb->pc > 0x10000))
 			{
 				//int32_t tmp[1];
 				//cpu_memory_rw_debug(cpu, 0x10324, tmp, 4, 1);
