@@ -865,7 +865,7 @@ void offload_server_extra_init(void)
 
     return;
 }
-
+int thread_pos[32] = {0,0,1,1,2,2,0};
 pthread_t center_server_thread;
 extern void offload_client_pmd_init(void);
 int main(int argc, char **argv, char **envp)
@@ -897,8 +897,10 @@ int main(int argc, char **argv, char **envp)
 	}
 	else if (offload_mode == 2)
 	{
-		
-        
+		fprintf(stderr, ">>>>>>>>>>>> [Master]. Thread positioning:\n");
+        for (int i = 0; i < 32; i++) {
+            fprintf(stderr, "Thread %d --> Node %d\n",  i, thread_pos[i]);
+        }        
 	}
 	else
 	{

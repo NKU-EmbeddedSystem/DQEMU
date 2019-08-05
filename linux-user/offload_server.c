@@ -1,6 +1,9 @@
 
 
 #include "offload_server.h"
+
+#define MAX_OFFLOAD_THREAD_IN_NODE 16
+
 extern __thread CPUArchState *thread_env;
 
 
@@ -10,7 +13,10 @@ static uint32_t page_recv_addr;
 static int page_syscall_recv_flag; static pthread_mutex_t page_syscall_recv_mutex; static pthread_cond_t page_syscall_recv_cond;
 static int mutex_ready_flag; static pthread_mutex_t mutex_recv_mutex; static pthread_cond_t mutex_recv_cond;
 static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread_cond_t exit_recv_cond;
-static int syscall_ready_flag; static pthread_mutex_t syscall_recv_mutex; static pthread_cond_t syscall_recv_cond;
+static int syscall_ready_flag[MAX_OFFLOAD_THREAD_IN_NODE]; 
+static pthread_mutex_t syscall_recv_mutex[MAX_OFFLOAD_THREAD_IN_NODE]; 
+static pthread_cond_t syscall_recv_cond[MAX_OFFLOAD_THREAD_IN_NODE];
+abi_long result_global[MAX_OFFLOAD_THREAD_IN_NODE];
 int syscall_clone_done;
 pthread_mutex_t syscall_clone_mutex;
 pthread_cond_t syscall_clone_cond;
@@ -19,7 +25,6 @@ static int exec_ready_to_init; static pthread_mutex_t exec_func_init_mutex; stat
 static void* exec_segfault_addr; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
 static int syscall_time_sum;
-abi_long result_global;
 
 
 /* get packet_counter of net_buffer */
@@ -74,8 +79,10 @@ static void offload_server_init(void)
 	pthread_cond_init(&mutex_recv_cond, NULL);
 	pthread_mutex_init(&exit_recv_cond,NULL);
 	pthread_cond_init(&exit_recv_mutex,NULL);
-	pthread_mutex_init(&syscall_recv_mutex,NULL);
-	pthread_mutex_init(&syscall_recv_cond,NULL);
+	for (int i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
+		pthread_mutex_init(&syscall_recv_mutex,NULL);
+		pthread_mutex_init(&syscall_recv_cond,NULL);
+	}
 	pthread_mutex_init(&futex_mutex, NULL);
 	pthread_cond_init(&futex_cond, NULL);
 	pthread_mutex_init(&exec_func_init_mutex, NULL);
@@ -281,7 +288,10 @@ void exec_func(void)
 	
 	offload_mode = 3;
 	static int count_n = 0;
-	
+	/* This is an init exec thread.
+	*  The initial exec's ID is 0.
+	*/
+	offload_thread_idx = 0;
 	//pthread_mutex_lock(&socket_mutex);
 	// static int first = 1;
 	// if (first == 1) {
@@ -377,11 +387,16 @@ void exec_func(void)
 /* For extra exec. */
 void exec_func_init(void)
 {
-	//exec_func();
-	//guest_base = 0x3c00f000;
+	/* This is an extra exec thread.
+	*  Using increasing index as its ID.
+	*  Extra exec thread ID starts at 1.
+	*  The initial exec is 0.
+	*/
 	offload_mode = 6;
 	extern __thread int offload_thread_idx;
-	offload_thread_idx = 3;
+	static int ncount = 1;
+	offload_thread_idx = ncount;
+	ncount++;
 	fprintf(stderr, "[exec_func_init]\tWaiting for informations...\n");
 	/* Once the thread reaches here, set the exec_read_to_init to 1.
 	 * wait the flag to be 2 indicating initialization info is ready. */
@@ -829,6 +844,7 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler_positive(uint32_t page_addr, int perm)
 {
+	//TODO self map to avoid extra fetching
 	struct timeb t, tend;
 	ftime(&t);
 	page_addr &= TARGET_PAGE_MASK;
@@ -1306,7 +1322,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	// 	exit(-1);
 	// }
 	// fprintf(stderr, "[pass_syscall]\targ2 = %d\n",arg2);
-	fprintf(stderr, "[pass_syscall]\tpassing syscall to center\n");
+	fprintf(stderr, "[pass_syscall]\tpassing syscall to center %d->%d\n", offload_server_idx, offload_thread_idx);
 	// mark1 syscall time sum
 	struct timeb t, tend;
     ftime(&t);
@@ -1343,6 +1359,8 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	pp += sizeof(abi_long);
 	*((int*)pp) = (int)offload_server_idx;
 	pp += sizeof(int);
+	*((int*)pp) = (int)offload_thread_idx;
+	pp += sizeof(int);
 	fprintf(stderr, "[pass_syscall]\targ1: %p, arg2:%p, arg3:%p\n", arg1, arg2, arg3);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_REQ);
@@ -1353,16 +1371,16 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 		fprintf(stderr, "[pass_syscall]\tpassing syscall failed\n");
 		exit(0);
 	}
-	fprintf(stderr, "[pass_syscall]\tpassed syscall, packet %d, waiting...\n", get_number());
-	syscall_ready_flag = 0;
-	pthread_mutex_lock(&syscall_recv_mutex);
-	while (syscall_ready_flag == 0)
+	fprintf(stderr, "[pass_syscall]\tpassed syscall, waiting...%d->%d\n", offload_server_idx, offload_thread_idx);
+	syscall_ready_flag[offload_thread_idx] = 0;
+	pthread_mutex_lock(&syscall_recv_mutex[offload_thread_idx]);
+	while (syscall_ready_flag[offload_thread_idx] == 0)
 	{
-		pthread_cond_wait(&syscall_recv_cond, &syscall_recv_mutex);
+		pthread_cond_wait(&syscall_recv_cond[offload_thread_idx], &syscall_recv_mutex[offload_thread_idx]);
 	}
-	pthread_mutex_unlock(&syscall_recv_mutex);
-	fprintf(stderr, "[pass_syscall]\tI'm awake!\n");
-	abi_long result = result_global;
+	pthread_mutex_unlock(&syscall_recv_mutex[offload_thread_idx]);
+	fprintf(stderr, "[pass_syscall]\tI'm awake! %d->%d\n", offload_server_idx, offload_thread_idx);
+	abi_long result = result_global[offload_thread_idx];
 	fprintf(stderr, "[pass_syscall]\returning result %p!\n", result);
 	// calculate time diff
 	ftime(&tend);
@@ -1381,12 +1399,14 @@ static void offload_server_process_syscall_result(void)
 	p = net_buffer;
 	abi_long result = *((abi_long *) p);
     p += sizeof(abi_long);
-	result_global = result;
+	int thread_id = (*(int*)p);
+	p += sizeof(int);
+	result_global[thread_id] = result;
 	fprintf(stderr, "[offload_server_process_syscall_result]\tgot syscall ret = %p, waking up thread\n", result);
-	pthread_mutex_lock(&syscall_recv_mutex);
-	syscall_ready_flag = 1;
-	pthread_cond_signal(&syscall_recv_cond);
-	pthread_mutex_unlock(&syscall_recv_mutex);
+	pthread_mutex_lock(&syscall_recv_mutex[thread_id]);
+	syscall_ready_flag[thread_id] = 1;
+	pthread_cond_signal(&syscall_recv_cond[thread_id]);
+	pthread_mutex_unlock(&syscall_recv_mutex[thread_id]);
 	//if (mutex_ready_flag == 0) offload_server_process_mutex_verified();
 }
 

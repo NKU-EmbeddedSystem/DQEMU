@@ -6476,8 +6476,8 @@ static void *clone_func(void *arg)
         pthread_mutex_unlock(&syscall_clone_mutex);
         count_n++;
     }
-    fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     offload_client_start(info->env);
+    fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     /* Signal to the parent that we're ready.  */
     fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     pthread_mutex_lock(&info->mutex);
@@ -6486,6 +6486,7 @@ static void *clone_func(void *arg)
     /* Wait until the parent has finished initializing the tls state.  */
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
+    
     
     extern void offload_client_daemonize(void);
     extern void close_network(void);
@@ -7085,24 +7086,8 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr)
 {
-    static count = 0;
-    if (count != 0) {
-        // return do_fork_local(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
-        //return do_fork_remote(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
-
-
-        extern void offload_send_do_fork_info(int idx, unsigned int flags, abi_ulong newsp,
-                   abi_ulong parent_tidptr, target_ulong newtls,
-                   abi_ulong child_tidptr);
-        fprintf(stderr, "[do_fork]\tenv %p flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
-                                env, flags, newsp, parent_tidptr, newtls, child_tidptr);
-        offload_send_do_fork_info(1, flags, newsp,
-                   parent_tidptr,  newtls,
-                    child_tidptr);
-    }
-    else {
-        count ++;
-    }
+    fprintf(stderr, "[do_fork]\tenv %p flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
+                                    env, flags, newsp, parent_tidptr, newtls, child_tidptr);
     CPUState *cpu = ENV_GET_CPU(env);
     int ret;
     TaskState *ts;
@@ -7117,6 +7102,29 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         flags &= ~(CLONE_VFORK | CLONE_VM);
 
     if (flags & CLONE_VM) {
+
+        extern int thread_pos[32];
+        static func_count = 0;
+        //func_count++;
+        //if (thread_pos[func_count])
+        if (func_count != 0) {
+            // return do_fork_local(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
+            //return do_fork_remote(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
+
+            fprintf(stderr, "[do_fork]\tfunc_count: %d\n", func_count);
+            extern void offload_send_do_fork_info(int idx, unsigned int flags, abi_ulong newsp,
+                    abi_ulong parent_tidptr, target_ulong newtls,
+                    abi_ulong child_tidptr);
+            
+            offload_send_do_fork_info(1, flags, newsp,
+                    parent_tidptr,  newtls,
+                        child_tidptr);
+        }
+        else {
+            func_count ++;
+        }
+
+
         TaskState *parent_ts = (TaskState *)cpu->opaque;
         new_thread_info info;
         pthread_attr_t attr;

@@ -46,6 +46,7 @@ static pthread_mutex_t socket_mutex;
 extern CPUArchState *env;
 uint32_t stack_end, stack_start;
 extern pthread_mutex_t cmpxchg_mutex;
+extern __thread int offload_thread_idx;
 int futex_result;
 static int autoSend(int,char*,int,int);
 static void offload_server_init(void);
