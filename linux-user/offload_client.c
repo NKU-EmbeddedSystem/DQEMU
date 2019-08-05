@@ -451,8 +451,7 @@ static void offload_client_init(void)
 	//struct timeval timeout={1, 0};
 	//int ret = setsockopt(skt[offload_client_idx], SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
 
-	futex_table = (struct futex_record*)malloc(FUTEX_RECORD_MAX*sizeof(struct futex_record));
-	memset(futex_table, 0, FUTEX_RECORD_MAX * sizeof(struct futex_record));
+	
 
 	pthread_mutex_init(&page_recv_mutex, NULL);
 	pthread_cond_init(&page_recv_cond, NULL);
@@ -1325,6 +1324,8 @@ void* offload_center_client_start(void *arg)
 	pthread_mutex_lock(&offload_center_init_mutex);
 	pthread_cond_signal(&offload_center_init_cond);
 	pthread_mutex_unlock(&offload_center_init_mutex);
+	futex_table = (struct futex_record*)malloc(FUTEX_RECORD_MAX*sizeof(struct futex_record));
+	memset(futex_table, 0, FUTEX_RECORD_MAX * sizeof(struct futex_record));
 	offload_client_daemonize();
 	close_network();
 	return NULL;
@@ -1771,6 +1772,7 @@ void syscall_daemonize(void)
 				offload_segfault_handler_positive(arg2, 1);
 				fprintf(stderr, "[syscall_daemonize]\tfetching write, %d %c %d\n", arg1, *(char*)g2h(arg2), arg3);
 			}
+			print_futex_table();
 			extern abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 							abi_long arg2, abi_long arg3, abi_long arg4,
 							abi_long arg5, abi_long arg6, abi_long arg7,
@@ -1788,8 +1790,6 @@ void syscall_daemonize(void)
 		}
 		free(syscall_p->cpu_env);
 		free(syscall_p);
-
-
 
 		fprintf(stderr, "[syscall_daemonize]\tcleaning up\n");
 		do_syscall_flag = 0;

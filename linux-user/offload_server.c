@@ -28,7 +28,28 @@ static void* exec_segfault_addr[MAX_OFFLOAD_THREAD_IN_NODE]; static void* syscal
 static int pgfault_time_sum;
 static int syscall_time_sum;
 
-
+/* Init Page Info Table. */
+void offload_server_pmd_init(void)
+{
+	for (int i = 0; i < L1_MAP_TABLE_SIZE; i++)
+	{
+		for (int j = 0; j < L2_MAP_TABLE_SIZE; j++)
+		{
+			page_map_table_s[i][j].cur_perm = 0;
+			//fprintf(stderr, "%d", page_map_table[i][j].owner_set.size);
+		}
+	}
+}
+/* Get Page info in server(slave) side. */
+inline PageMapDesc_server* get_pmd_s(uint32_t page_addr)
+{
+	page_addr = PAGE_OF(page_addr);
+	page_addr = page_addr >> MAP_PAGE_BITS;
+	int index1 = (page_addr >> L1_MAP_TABLE_SHIFT) & (L1_MAP_TABLE_SIZE - 1);
+	int index2 = page_addr & (L2_MAP_TABLE_SIZE - 1);
+	PageMapDesc_server *pmd = &page_map_table_s[index1][index2];
+	return pmd;
+}
 /* get packet_counter of net_buffer */
 static uint32_t get_number(void)
 {
@@ -613,9 +634,12 @@ static void offload_process_page_request(void)
 	p += sizeof(int);
 	int forwho = *((int*) p);
 	p += sizeof(int);
+	PageMapDesc_server *pmd = get_pmd_s(page_addr);
 	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d, from %d, for %d\n", page_addr, perm, client_idx, forwho);
 	// when debug, erase this.
+	pmd->cur_perm = 1;
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
+
 	if (page_addr == 0x78000)
 	{
 		fprintf(stderr, "[offload_process_page_request]\tdebug\t0x78f4c = %d", *(int *)(g2h(0x78f4c)));
@@ -633,14 +657,18 @@ static void offload_process_page_request(void)
 	*	we won't be able to use it (invalidate)
 	*	otherwise it is a shared page (shared)
 	*/
+	
 	if (perm == 2)
 	{
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_NONE);
+		pmd->cur_perm = 0;
 	}
 	else if (perm == 1)
 	{
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);
+		pmd->cur_perm = 1;
 	}
+	
 	//pthread_mutex_unlock(&socket_mutex);
 	//pthread_mutex_unlock(&socket_mutex);
 	// #todo: if the worker can know that this page is during a perm change from exclusive to shared, 
@@ -683,11 +711,11 @@ static void offload_process_page_content(void)
 	}
 	fprintf(stderr, "[offload_process_page_content]\tpage %x perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
 	// wake up the execution thread upon this required page.
-	offload_page_recv_wake_up_thread(page_addr);
+	offload_page_recv_wake_up_thread(page_addr, perm);
 	offload_send_page_ack(page_addr, perm);
 }
 
-void offload_page_recv_wake_up_thread(uint32_t page_addr)
+void offload_page_recv_wake_up_thread(uint32_t page_addr, int perm)
 {
 	int i = 0;
 	for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
@@ -708,6 +736,9 @@ void offload_page_recv_wake_up_thread(uint32_t page_addr)
 		pthread_cond_broadcast(&page_syscall_recv_cond);
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 	}
+	/* Update server's page map. */
+	PageMapDesc_server* pmd = get_pmd_s(page_addr);
+	pmd->cur_perm = perm;
 }
 
 /* send |CONTENT|page|perm|content| */
@@ -777,6 +808,65 @@ pt_index(unsigned long addr, int level)
 	return (addr >> (PAGE_SHIFT + (10 * level))) & 0x3ff;
 }
 
+void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
+{
+	if (offload_mode != 4)
+	{		
+		//TODO So maybe we deal with syscall in the future (must implement pmd_init)
+		//Check if we already have the page.
+		PageMapDesc_server *pmd = get_pmd_s(page_addr);
+		if (pmd->cur_perm >= perm) {
+			fprintf(stderr, "[offload_send_page_request_and_wait]\tI think we already have the page.\n");
+			return;
+		}
+		pthread_mutex_lock(&page_recv_mutex[offload_thread_idx]);
+		//!!! Dangerous! If others have sent this and is waiting, just don not send again. But race condition could happen.
+		int have_already_requested = 0;
+		int i;
+		{
+			for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
+				if (page_recv_flag[i] == 0 && exec_segfault_addr[i] == page_addr) {
+					have_already_requested = 1;
+					break;
+				}
+			}
+		}
+		if (!have_already_requested) {
+			offload_server_send_page_request(page_addr, perm); 
+			fprintf(stderr, "[offload_send_page_request_and_wait]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		} else {
+			fprintf(stderr, "[offload_send_page_request_and_wait]\tthread %d already requested.\n", i);
+		}
+		exec_segfault_addr[offload_thread_idx] = page_addr;
+		page_recv_flag[offload_thread_idx] = 0;
+		//TODO check if 
+		while (page_recv_flag[offload_thread_idx] == 0)
+		{
+			pthread_cond_wait(&page_recv_cond[offload_thread_idx], &page_recv_mutex[offload_thread_idx]);
+		}
+		exec_segfault_addr[offload_thread_idx] = 0;
+		pthread_mutex_unlock(&page_recv_mutex[offload_thread_idx]);
+		
+		fprintf(stderr, "[offload_send_page_request_and_wait]\tawake\n");
+	}
+	/* for syscall#0's segfault */
+	else
+	{
+		syscall_segfault_addr = page_addr;
+		fprintf(stderr, "[offload_send_page_request_and_wait]\tin syscall segfault\n");
+		pthread_mutex_lock(&page_syscall_recv_mutex);
+		page_syscall_recv_flag = 0;
+		offload_server_send_page_request(page_addr, perm); 
+		//offload_server_send_page_request(page_addr, 2);
+		fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		while (page_syscall_recv_flag == 0)
+		{
+			pthread_cond_wait(&page_syscall_recv_cond, &page_syscall_recv_mutex);
+		}
+		pthread_mutex_unlock(&page_syscall_recv_mutex);
+		fprintf(stderr, "[offload_segfault_handler]\tsyscall segfault awake\n");
+	}
+}
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 {
@@ -792,71 +882,15 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 			guest_addr, host_addr, pt_index(host_addr, 0), pt_index(host_addr, 1), pt_index(host_addr, 2), pt_index(VPTPTR, 2), pt_index(VPTPTR, 1));
 
 	target_ulong page_addr = guest_addr & TARGET_PAGE_MASK;
-    //fprintf(stderr, "Accessed guest addr %lx\n", guest_addr);
-	
     //fprintf(stderr, "\nHost instruction address is %p\n", uc->uc_mcontext.gregs[REG_RIP]);
-
-
     int is_write = ((uc->uc_mcontext.gregs[REG_ERR] & 0x2) != 0);
 	//TODO !!!!!!!!!!!!!!!DEBUG
 	//is_write = 1;
 	fprintf(stderr, "[offload_segfault_handler]\tsegfault on page addr: %x, perm: %s\n", page_addr, is_write?"WRITE|READ":"READ");
 	// sum time on pagefault
-	
+	offload_send_page_request_and_wait(page_addr, is_write+1);
 	//get_client_page(is_write, guest_page);
-	
 	// send page request, sleep until content is sent back.
-	
-	if (offload_mode != 4)
-	{
-		
-		pthread_mutex_lock(&page_recv_mutex[offload_thread_idx]);
-		//!!! Dangerous! If others have sent this and is waiting, just don not send again. But race condition could happen.
-		int have_already_requested = 0;
-		int i;
-		{
-			for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
-				if (page_recv_flag[i] == 0 && exec_segfault_addr[i] == page_addr) {
-					have_already_requested = 1;
-					break;
-				}
-			}
-		}
-		if (!have_already_requested) {
-			offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
-			fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
-		} else {
-			fprintf(stderr, "[offload_segfault_handler]\tthread %d already requested.\n", i);
-		}
-		exec_segfault_addr[offload_thread_idx] = page_addr;
-		page_recv_flag[offload_thread_idx] = 0;
-		//TODO check if 
-		while (page_recv_flag[offload_thread_idx] == 0)
-		{
-			pthread_cond_wait(&page_recv_cond[offload_thread_idx], &page_recv_mutex[offload_thread_idx]);
-		}
-		exec_segfault_addr[offload_thread_idx] = 0;
-		pthread_mutex_unlock(&page_recv_mutex[offload_thread_idx]);
-		
-		fprintf(stderr, "[offload_segfault_handler]\tawake\n");
-	}
-	/* for syscall#0's segfault */
-	else
-	{
-		syscall_segfault_addr = page_addr;
-		fprintf(stderr, "[offload_segfault_handler]\tin syscall segfault\n");
-		pthread_mutex_lock(&page_syscall_recv_mutex);
-		page_syscall_recv_flag = 0;
-		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
-		//offload_server_send_page_request(page_addr, 2);
-		fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
-		while (page_syscall_recv_flag == 0)
-		{
-			pthread_cond_wait(&page_syscall_recv_cond, &page_syscall_recv_mutex);
-		}
-		pthread_mutex_unlock(&page_syscall_recv_mutex);
-		fprintf(stderr, "[offload_segfault_handler]\tsyscall segfault awake\n");
-	}
 	//fprintf(stderr, "[offload_segfault_handler]\t%p value is %p\n", guest_addr, *(uint32_t*)(g2h(guest_addr)));
 	ftime(&tend);
 	int secDiff = tend.time - t.time;
@@ -876,47 +910,12 @@ int offload_segfault_handler_positive(uint32_t page_addr, int perm)
 	page_addr &= TARGET_PAGE_MASK;
 	fprintf(stderr, "[offload_segfault_handler_positive]\tguest addr is %p\n",
 			page_addr);
-
-
 	int is_write = perm - 1;
 	//TODO !!!!!!!!!!!!!!!DEBUG
 	//is_write = 1;
 	fprintf(stderr, "[offload_segfault_handler_positive]\tsegfault on page addr: %x, perm: %s\n", page_addr, is_write ? "WRITE|READ" : "READ");
+	offload_send_page_request_and_wait(page_addr, is_write+1);
 
-
-	if (offload_mode != 4)
-	{
-		exec_segfault_addr[offload_thread_idx] = page_addr;
-		pthread_mutex_lock(&page_recv_mutex[offload_thread_idx]);
-		page_recv_flag[offload_thread_idx] = 0;
-		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
-		fprintf(stderr, "[offload_segfault_handler_positive]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
-		//TODO check if
-		while (page_recv_flag[offload_thread_idx] == 0)
-		{
-			pthread_cond_wait(&page_recv_cond[offload_thread_idx], &page_recv_mutex[offload_thread_idx]);
-		}
-		pthread_mutex_unlock(&page_recv_mutex[offload_thread_idx]);
-
-		fprintf(stderr, "[offload_segfault_handler_positive]\tawake\n");
-	}
-	/* for syscall#0's segfault */
-	else
-	{
-		syscall_segfault_addr = page_addr;
-		fprintf(stderr, "[offload_segfault_handler_positive]\tin syscall segfault\n");
-		pthread_mutex_lock(&page_syscall_recv_mutex);
-		page_syscall_recv_flag = 0;
-		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
-		//offload_server_send_page_request(page_addr, 2);
-		fprintf(stderr, "[offload_segfault_handler_positive]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
-		while (page_syscall_recv_flag == 0)
-		{
-			pthread_cond_wait(&page_syscall_recv_cond, &page_syscall_recv_mutex);
-		}
-		pthread_mutex_unlock(&page_syscall_recv_mutex);
-		fprintf(stderr, "[offload_segfault_handler_positive]\tsyscall segfault awake\n");
-	}
 	//fprintf(stderr, "[offload_segfault_handler_positive]\t%p value is %d\n", page_addr, *(uint32_t *)(g2h(page_addr)));
 	ftime(&tend);
 	int secDiff = tend.time - t.time;
@@ -974,7 +973,7 @@ static void offload_process_page_upgrade(void)
 	
 	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x perm: %s\n", page_addr, perm == 1 ? "READ" : "WRITE|READ");
 	// wake up the execution thread upon this required page.
-	offload_page_recv_wake_up_thread(page_addr);
+	offload_page_recv_wake_up_thread(page_addr, perm);
 	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x upgrade to %d\n", page_addr, perm);
 	if (perm > 0)
 	{
