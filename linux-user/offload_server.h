@@ -34,7 +34,7 @@ void* offload_server_start_thread(void* arg);
 extern pthread_mutex_t main_exec_mutex;
 extern pthread_cond_t main_exec_cond;
 extern int main_exec_flag;
-
+void offload_page_recv_wake_up_thread(uint32_t page_addr);
 static void try_recv(int);
 int sktfd;
 int client_socket;

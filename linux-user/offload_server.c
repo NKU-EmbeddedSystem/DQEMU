@@ -8,8 +8,10 @@ extern __thread CPUArchState *thread_env;
 
 
 // used along with pthread_cond, indicate whether the page required by the execution thread is received.
-static int page_recv_flag; static pthread_mutex_t page_recv_mutex; static pthread_cond_t page_recv_cond;
-static uint32_t page_recv_addr;
+static int page_recv_flag[MAX_OFFLOAD_THREAD_IN_NODE]; 
+static pthread_mutex_t page_recv_mutex[MAX_OFFLOAD_THREAD_IN_NODE]; 
+static pthread_cond_t page_recv_cond[MAX_OFFLOAD_THREAD_IN_NODE];
+static uint32_t page_recv_addr[MAX_OFFLOAD_THREAD_IN_NODE];
 static int page_syscall_recv_flag; static pthread_mutex_t page_syscall_recv_mutex; static pthread_cond_t page_syscall_recv_cond;
 static int mutex_ready_flag; static pthread_mutex_t mutex_recv_mutex; static pthread_cond_t mutex_recv_cond;
 static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread_cond_t exit_recv_cond;
@@ -22,7 +24,7 @@ pthread_mutex_t syscall_clone_mutex;
 pthread_cond_t syscall_clone_cond;
 static int futex_uaddr_changed_flag; static pthread_mutex_t futex_mutex; static pthread_cond_t futex_cond;
 static int exec_ready_to_init; static pthread_mutex_t exec_func_init_mutex; static pthread_cond_t exec_func_init_cond;
-static void* exec_segfault_addr; static void* syscall_segfault_addr;
+static void* exec_segfault_addr[MAX_OFFLOAD_THREAD_IN_NODE]; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
 static int syscall_time_sum;
 
@@ -71,8 +73,7 @@ static void offload_server_init(void)
 	
 	fprintf(stderr, "[offload_server_init]\tbind socket, port# %d\n", server_port_of(offload_server_idx));
 	listen(sktfd, 100);
-	pthread_mutex_init(&page_recv_mutex, NULL);
-	pthread_cond_init(&page_recv_cond, NULL);
+	
 	pthread_mutex_init(&page_syscall_recv_mutex,NULL);
 	pthread_cond_init(&page_syscall_recv_cond,NULL);
 	pthread_mutex_init(&mutex_recv_mutex, NULL);
@@ -80,8 +81,10 @@ static void offload_server_init(void)
 	pthread_mutex_init(&exit_recv_cond,NULL);
 	pthread_cond_init(&exit_recv_mutex,NULL);
 	for (int i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
-		pthread_mutex_init(&syscall_recv_mutex,NULL);
-		pthread_mutex_init(&syscall_recv_cond,NULL);
+		pthread_mutex_init(&syscall_recv_mutex[i],NULL);
+		pthread_mutex_init(&syscall_recv_cond[i],NULL);
+		pthread_mutex_init(&page_recv_mutex[i], NULL);
+		pthread_cond_init(&page_recv_cond[i], NULL);
 	}
 	pthread_mutex_init(&futex_mutex, NULL);
 	pthread_cond_init(&futex_cond, NULL);
@@ -680,25 +683,31 @@ static void offload_process_page_content(void)
 	}
 	fprintf(stderr, "[offload_process_page_content]\tpage %x perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
 	// wake up the execution thread upon this required page.
-	if (page_addr == exec_segfault_addr)
-	{
-		fprintf(stderr, "[offload_process_page_content]\twaking up exec\n");
-		pthread_mutex_lock(&page_recv_mutex);
-		page_recv_flag = 1;
-		pthread_cond_broadcast(&page_recv_cond);
-		pthread_mutex_unlock(&page_recv_mutex);
+	offload_page_recv_wake_up_thread(page_addr);
+	offload_send_page_ack(page_addr, perm);
+}
+
+void offload_page_recv_wake_up_thread(uint32_t page_addr)
+{
+	int i = 0;
+	for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
+		if (page_addr == exec_segfault_addr[i]) {
+			fprintf(stderr, "[offload_page_recv_wake_up_thread]\twaking up exec %d->%d\n",
+								offload_server_idx, i);
+			pthread_mutex_lock(&page_recv_mutex[i]);
+			page_recv_flag[i] = 1;
+			pthread_cond_broadcast(&page_recv_cond[i]);
+			pthread_mutex_unlock(&page_recv_mutex[i]);
+		}
 	}
 	if (page_addr == syscall_segfault_addr)
 	{
-		fprintf(stderr, "[offload_process_page_content]\twaking up syscall\n");
+		fprintf(stderr, "[offload_page_recv_wake_up_thread]\twaking up syscall\n");
 		pthread_mutex_lock(&page_syscall_recv_mutex);
 		page_syscall_recv_flag = 1;
 		pthread_cond_broadcast(&page_syscall_recv_cond);
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 	}
-	//pthread_mutex_unlock(&socket_mutex);
-	/* ? */
-	offload_send_page_ack(page_addr, perm);
 }
 
 /* send |CONTENT|page|perm|content| */
@@ -800,17 +809,34 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 	
 	if (offload_mode != 4)
 	{
-		exec_segfault_addr = page_addr;
-		pthread_mutex_lock(&page_recv_mutex);
-		page_recv_flag = 0;
-		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
-		fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
-		//TODO check if 
-		while (page_recv_flag == 0)
+		
+		pthread_mutex_lock(&page_recv_mutex[offload_thread_idx]);
+		//!!! Dangerous! If others have sent this and is waiting, just don not send again. But race condition could happen.
+		int have_already_requested = 0;
+		int i;
 		{
-			pthread_cond_wait(&page_recv_cond, &page_recv_mutex);
+			for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
+				if (page_recv_flag[i] == 0 && exec_segfault_addr[i] == page_addr) {
+					have_already_requested = 1;
+					break;
+				}
+			}
 		}
-		pthread_mutex_unlock(&page_recv_mutex);
+		if (!have_already_requested) {
+			offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
+			fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		} else {
+			fprintf(stderr, "[offload_segfault_handler]\tthread %d already requested.\n", i);
+		}
+		exec_segfault_addr[offload_thread_idx] = page_addr;
+		page_recv_flag[offload_thread_idx] = 0;
+		//TODO check if 
+		while (page_recv_flag[offload_thread_idx] == 0)
+		{
+			pthread_cond_wait(&page_recv_cond[offload_thread_idx], &page_recv_mutex[offload_thread_idx]);
+		}
+		exec_segfault_addr[offload_thread_idx] = 0;
+		pthread_mutex_unlock(&page_recv_mutex[offload_thread_idx]);
 		
 		fprintf(stderr, "[offload_segfault_handler]\tawake\n");
 	}
@@ -860,17 +886,17 @@ int offload_segfault_handler_positive(uint32_t page_addr, int perm)
 
 	if (offload_mode != 4)
 	{
-		exec_segfault_addr = page_addr;
-		pthread_mutex_lock(&page_recv_mutex);
-		page_recv_flag = 0;
+		exec_segfault_addr[offload_thread_idx] = page_addr;
+		pthread_mutex_lock(&page_recv_mutex[offload_thread_idx]);
+		page_recv_flag[offload_thread_idx] = 0;
 		offload_server_send_page_request(page_addr, is_write + 1); // easy way to convert is_write to perm
 		fprintf(stderr, "[offload_segfault_handler_positive]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
 		//TODO check if
-		while (page_recv_flag == 0)
+		while (page_recv_flag[offload_thread_idx] == 0)
 		{
-			pthread_cond_wait(&page_recv_cond, &page_recv_mutex);
+			pthread_cond_wait(&page_recv_cond[offload_thread_idx], &page_recv_mutex[offload_thread_idx]);
 		}
-		pthread_mutex_unlock(&page_recv_mutex);
+		pthread_mutex_unlock(&page_recv_mutex[offload_thread_idx]);
 
 		fprintf(stderr, "[offload_segfault_handler_positive]\tawake\n");
 	}
@@ -946,28 +972,9 @@ static void offload_process_page_upgrade(void)
 	else if(perm == 0)
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_NONE);
 	
-	// pthread_mutex_lock(&page_recv_mutex);
-	// page_recv_flag = 1;
-	// pthread_cond_signal(&page_recv_cond);
-	// pthread_mutex_unlock(&page_recv_mutex);
 	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x perm: %s\n", page_addr, perm == 1 ? "READ" : "WRITE|READ");
 	// wake up the execution thread upon this required page.
-	if (page_addr == exec_segfault_addr)
-	{
-		fprintf(stderr, "[offload_process_page_upgrade]\twaking up exec\n");
-		pthread_mutex_lock(&page_recv_mutex);
-		page_recv_flag = 1;
-		pthread_cond_broadcast(&page_recv_cond);
-		pthread_mutex_unlock(&page_recv_mutex);
-	}
-	if (page_addr == syscall_segfault_addr)
-	{
-		fprintf(stderr, "[offload_process_page_upgrade]\twaking up syscall\n");
-		pthread_mutex_lock(&page_syscall_recv_mutex);
-		page_syscall_recv_flag = 1;
-		pthread_cond_broadcast(&page_syscall_recv_cond);
-		pthread_mutex_unlock(&page_syscall_recv_mutex);
-	}
+	offload_page_recv_wake_up_thread(page_addr);
 	fprintf(stderr, "[offload_process_page_upgrade]\tpage %x upgrade to %d\n", page_addr, perm);
 	if (perm > 0)
 	{
@@ -1257,25 +1264,6 @@ static void offload_server_send_futex_wait_request(target_ulong guest_addr, int 
 	return 0;
 }
 
-
-static void offload_server_process_futex_wait_result()
-{
-	p = net_buffer;
-	
-	int result = *((target_ulong *) p);
-    p += sizeof(target_ulong);
-	
-	
-	
-	pthread_mutex_lock(&page_recv_mutex);
-	
-	futex_result = result;
-	page_recv_flag = 1;
-	pthread_cond_signal(&page_recv_cond);
-	pthread_mutex_unlock(&page_recv_mutex);
-}
-
-
 int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3)
 {
 	//futex_result = 0;
@@ -1290,22 +1278,6 @@ int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong 
 
 	
 	return 0;
-}
-static void offload_server_process_futex_wake_result(void)
-{
-	p = net_buffer;
-	
-	int result = *((target_ulong *) p);
-    p += sizeof(target_ulong);
-	
-	
-	
-	pthread_mutex_lock(&page_recv_mutex);
-	
-	futex_result = result;
-	page_recv_flag = 1;
-	pthread_cond_signal(&page_recv_cond);
-	pthread_mutex_unlock(&page_recv_mutex);
 }
 
 abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
