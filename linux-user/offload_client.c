@@ -680,9 +680,9 @@ static void offload_send_start(void)
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
-	if (offload_client_idx != 1&&0) {
+	if (offload_client_idx != 1) {
 		res = autoSend(1, net_buffer, (p - net_buffer), 0);
-		pthread_exit(0);
+		//pthread_exit(0);
 		return;
 	}
 	res = autoSend(offload_client_idx, net_buffer, (p - net_buffer), 0);
@@ -1819,6 +1819,7 @@ void offload_client_start(CPUArchState *the_env)
 	int res;
 	client_env = the_env;
 	offload_send_start();
+	fprintf(stderr, "[offload_client_start]\tSent. returning..\n");
 	return;
 }
 

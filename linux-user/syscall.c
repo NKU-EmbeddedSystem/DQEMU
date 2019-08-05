@@ -6464,16 +6464,22 @@ static void *clone_func(void *arg)
     
     //cpu_loop(env);
 
-    offload_client_start(info->env);
+    
     /* Wait untill syscall thread is ready. */
-
-    pthread_mutex_lock(&syscall_clone_mutex);
-	while (syscall_clone_done == 0)
-	{
-		pthread_cond_wait(&syscall_clone_cond, &syscall_clone_mutex);
-	}
-	pthread_mutex_unlock(&syscall_clone_mutex);
+    static int count_n = 0;
+    if (count_n == 0) {
+        pthread_mutex_lock(&syscall_clone_mutex);
+        while (syscall_clone_done == 0)
+        {
+            pthread_cond_wait(&syscall_clone_cond, &syscall_clone_mutex);
+        }
+        pthread_mutex_unlock(&syscall_clone_mutex);
+        count_n++;
+    }
+    fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
+    offload_client_start(info->env);
     /* Signal to the parent that we're ready.  */
+    fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     pthread_mutex_lock(&info->mutex);
     pthread_cond_broadcast(&info->cond);
     pthread_mutex_unlock(&info->mutex);
@@ -6553,7 +6559,9 @@ void *clone_func_server_local(void *arg)
     // !! I think we do it later.
     //rcu_register_thread();
     //tcg_register_thread();
+    extern __thread CPUArchState *thread_env;
     env = info->env;
+    thread_env = env;
     cpu = ENV_GET_CPU(env);
     thread_cpu = cpu;
     ts = (TaskState *)cpu->opaque;
@@ -6751,8 +6759,6 @@ static int do_fork_remote(CPUArchState *env, unsigned int flags, abi_ulong newsp
 }
 
 int extra_exec_init();
-/* do_fork() Must return host values and target errnos (unlike most
-   do_*() functions). */
 static int do_fork_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr)
@@ -7080,7 +7086,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong child_tidptr)
 {
     static count = 0;
-    if (count != 0 &&0) {
+    if (count != 0) {
         // return do_fork_local(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
         //return do_fork_remote(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
 
@@ -7179,26 +7185,28 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         offload_log(stderr, "[do_fork]\tpthread_create\n");
         ret = pthread_create(&info.thread, &attr, clone_func, &info);
         /* TODO: Free new CPU state if thread creation failed.  */
-        offload_log(stderr, "[do_fork]\pthread_create res: %d\n", ret);
+        offload_log(stderr, "[do_fork]\tpthread_create res: %d\n", ret);
         static int is_first = 1;
         if (is_first)
         {
             pthread_t syscall_init;
             ret = pthread_create(&syscall_init, &attr, clone_func_syscall, &info);
             //pthread_join(syscall_init, NULL);
-            offload_log(stderr, "[do_fork]\pthread_create syscall_daemonize res: %d\n", ret);
+            offload_log(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
             is_first = 0;
         }
         else {
-            pthread_mutex_lock(&syscall_clone_mutex);
-            syscall_clone_done = 1;
-            pthread_cond_broadcast(&syscall_clone_cond);
-            pthread_mutex_unlock(&syscall_clone_mutex);
+            // pthread_mutex_lock(&syscall_clone_mutex);
+            // syscall_clone_done = 1;
+            // pthread_cond_broadcast(&syscall_clone_cond);
+            // pthread_mutex_unlock(&syscall_clone_mutex);
         }
-
+        offload_log(stderr, "[do_fork]\tSET mask NULL\n");
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
         pthread_attr_destroy(&attr);
+        
         if (ret == 0) {
+            offload_log(stderr, "[do_fork]\tWait for the child to initialize.\n");
             /* Wait for the child to initialize.  */
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
@@ -8817,27 +8825,28 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 
         cpu_list_lock();
 
-        if (CPU_NEXT(first_cpu)) {
-            TaskState *ts;
+        /* Yes, but we do the following. */
+        // if (CPU_NEXT(first_cpu)) {
+        //     TaskState *ts;
 
-            /* Remove the CPU from the list.  */
-            QTAILQ_REMOVE(&cpus, cpu, node);
+        //     /* Remove the CPU from the list.  */
+        //     QTAILQ_REMOVE(&cpus, cpu, node);
 
-            cpu_list_unlock();
+        //     cpu_list_unlock();
 
-            ts = cpu->opaque;
-            if (ts->child_tidptr) {
-                put_user_u32(0, ts->child_tidptr);
-                sys_futex(g2h(ts->child_tidptr), FUTEX_WAKE, INT_MAX,
-                          NULL, NULL, 0);
-            }
-            thread_cpu = NULL;
-            object_unref(OBJECT(cpu));
-            g_free(ts);
-            //fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
-            rcu_unregister_thread();
-            pthread_exit(NULL);
-        }
+        //     ts = cpu->opaque;
+        //     if (ts->child_tidptr) {
+        //         put_user_u32(0, ts->child_tidptr);
+        //         sys_futex(g2h(ts->child_tidptr), FUTEX_WAKE, INT_MAX,
+        //                   NULL, NULL, 0);
+        //     }
+        //     thread_cpu = NULL;
+        //     object_unref(OBJECT(cpu));
+        //     g_free(ts);
+        //     //fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
+        //     rcu_unregister_thread();
+        //     pthread_exit(NULL);
+        // }
 
         cpu_list_unlock();
         preexit_cleanup(cpu_env, arg1);

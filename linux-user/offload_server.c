@@ -1,78 +1,8 @@
 
-#include "qemu/osdep.h"
-#include "qemu/units.h"
-#include "qemu-version.h"
-#include <sys/syscall.h>
-#include <sys/resource.h>
 
-#include "qapi/error.h"
-#include "qemu.h"
-#include "qemu/path.h"
-#include "qemu/config-file.h"
-#include "qemu/cutils.h"
-#include "qemu/help_option.h"
-#include "cpu.h"
-#include "exec/exec-all.h"
-#include "tcg.h"
-#include "qemu/timer.h"
-#include "qemu/envlist.h"
-#include "elf.h"
-#include "trace/control.h"
-#include "target_elf.h"
-#include "cpu_loop-common.h"
+#include "offload_server.h"
+extern __thread CPUArchState *thread_env;
 
-#include <sys/socket.h>
-#include "offload_common.h"
-#include <sys/timeb.h>
-
-static void try_recv(int);
-int sktfd;
-int client_socket;
-extern int offload_server_idx;
-static char net_buffer[NET_BUFFER_SIZE];
-static pthread_mutex_t socket_mutex;
-#define BUFFER_PAYLOAD_P (net_buffer + TCP_HEADER_SIZE)
-#define fprintf offload_log
-extern CPUArchState *env;
-uint32_t stack_end, stack_start;
-extern pthread_mutex_t cmpxchg_mutex;
-int futex_result;
-static int autoSend(int,char*,int,int);
-static void offload_server_init(void);
-static void offload_server_daemonize(void);
-static void offload_process_start(void);
-static void load_cpu(void);
-static void load_binary(void);
-static void load_brk(void);
-static void load_memory_region(void);
-static void* exec_func(void *arg);
-static void offload_server_process_futex_wait_result(void);
-static void offload_process_fork_info(void);
-static void offload_server_send_futex_wait_request(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
-int offload_server_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
-static void offload_server_send_page_request(target_ulong page_addr, uint32_t perm);
-int offload_segfault_handler_positive(uint32_t page_addr, int perm);
-void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t, uint32_t, uint32_t);
-static void offload_process_page_request(void);
-static void offload_process_page_content(void);
-static void offload_send_page_content(target_ulong page_addr, uint32_t perm,int);
-static void offload_send_page_ack(target_ulong page_addr, uint32_t perm);
-int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc);
-static void offload_process_page_perm(void);
-void offload_server_start(void);
-void* offload_center_server_start(void*);
-static void offload_server_process_futex_wake_result(void);
-void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
-void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
-extern void offload_server_qemu_init(void);
-extern void offload_server_extra_init(void);
-abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
-					  abi_long arg2, abi_long arg3, abi_long arg4,
-					  abi_long arg5, abi_long arg6, abi_long arg7,
-					  abi_long arg8);
-int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
-static void offload_server_process_syscall_result(void);
-static void offload_process_tid(void);
 
 // used along with pthread_cond, indicate whether the page required by the execution thread is received.
 static int page_recv_flag; static pthread_mutex_t page_recv_mutex; static pthread_cond_t page_recv_cond;
@@ -158,19 +88,28 @@ static void load_cpu(void)
 {
 	// copy the CPU struct
 	
-	
-	//memcpy(env, p, sizeof(CPUARMState));
-	*((CPUARMState *) env) = *((CPUARMState *) p);
+	static int count_n = 0;
+
+	//memcpy(thread_env, p, sizeof(CPUARMState));
+	extern CPUArchState *env_bak;
+	extern __thread CPUArchState *thread_env;
+	// if (count_n != 0) {
+	// 	thread_env = cpu_copy(env_bak);
+	// 	assert(thread_env);
+	// }
+	// count_n++;
+	assert(thread_env);
+	*((CPUARMState *) thread_env) = *((CPUARMState *) p);
 
 	p += sizeof(CPUARMState);
 	
 
-	fprintf(stderr,"[load_cpu]\tenv: %p\n", env);
-	CPUState *cpu = ENV_GET_CPU(env);
+	fprintf(stderr,"[load_cpu]\tenv: %p\n", thread_env);
+	CPUState *cpu = ENV_GET_CPU(thread_env);
 	// extern CPUArchState *thread_cpu;
 	extern __thread CPUState *thread_cpu;
 	thread_cpu = cpu;
-	thread_cpu->env_ptr = env;
+	thread_cpu->env_ptr = thread_env;
 	fprintf(stderr,"[load_cpu]\tcpu: %p\n", cpu);
 	TaskState *ts1;
 
@@ -205,7 +144,7 @@ static void load_cpu(void)
 	p +=  sizeof(env->regs);
 	fprintf(stderr, "pc: %x\n",env->regs[15]);*/
 
-	fprintf(stderr, "[load_cpu]\tr0: %d\n", env->regs[0]);
+	fprintf(stderr, "[load_cpu]\tr0: %d\n", thread_env->regs[0]);
 }
 
 static void load_memory_region(void)
@@ -236,7 +175,7 @@ static void load_memory_region(void)
         stack_end = *(target_ulong *)p;
         p += sizeof(target_ulong);
     }
-	static int mapped[50] = {0}, mapped_count = 0;
+	static int mapped[50] = {0}, mapped_count = 0, first = 1;
 	int mapped_flag = 0;
 	for (uint32_t i = 0; i < num; i++) 
 	{
@@ -258,15 +197,19 @@ static void load_memory_region(void)
 		}
 		if (mapped_flag)
 			continue;
-		/* Now we map the region. */
-		fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
-		mapped[mapped_count++] = addr;
+		if (first)
+		{
+			/* Now we map the region. */
+			fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
+			mapped[mapped_count++] = addr;
 
-		int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
-							  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-		fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
-		//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
+			int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
+								MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+			fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
+			//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
+		}
     }
+	first = 0;
 }
 
 static void load_brk(void)
@@ -278,25 +221,29 @@ static void load_brk(void)
     p += sizeof(uint32_t);
 	
     int target_mmap_return;
-    if(old_brk != 0)
-	{
-		if(current_brk > old_brk)
+	static int first = 1;
+	if (first) {
+		if(old_brk != 0)
 		{
-			target_mmap_return = target_mmap(old_brk, (unsigned int)current_brk - old_brk,
-											 PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-			mprotect(g2h(old_brk), (unsigned int)current_brk - old_brk, PROT_NONE);
-			if (target_mmap_return != old_brk)
-				fprintf(stderr, "[load_brk]\ttarget_mmap  failed at start of ProcessOffloadStart, returns %x\n", target_mmap_return);
-		}
-		else
-		{
-			int ret = target_munmap(current_brk, (unsigned int) old_brk - current_brk);
-			if (ret) 
+			if(current_brk > old_brk)
 			{
-				fprintf(stderr, "[load_brk]\tThe munmap failed at the start of ProcessOffloadStart : %d \n", ret);
+				target_mmap_return = target_mmap(old_brk, (unsigned int)current_brk - old_brk,
+												PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+				mprotect(g2h(old_brk), (unsigned int)current_brk - old_brk, PROT_NONE);
+				if (target_mmap_return != old_brk)
+					fprintf(stderr, "[load_brk]\ttarget_mmap  failed at start of ProcessOffloadStart, returns %x\n", target_mmap_return);
+			}
+			else
+			{
+				int ret = target_munmap(current_brk, (unsigned int) old_brk - current_brk);
+				if (ret) 
+				{
+					fprintf(stderr, "[load_brk]\tThe munmap failed at the start of ProcessOffloadStart : %d \n", ret);
+				}
 			}
 		}
-    }
+	}
+	first = 0;
 }
 
 static void load_binary(void)
@@ -309,14 +256,14 @@ static void load_binary(void)
 	static first = 1;
 	if (first) {
 		fprintf(stderr, "[load_binary]\tmap binary from %p to %x\n", binary_start_address, binary_end_address);
-		fprintf(stderr, "[load_binary]\there: %x %x %x\n", g2h(binary_start_address), g2h(binary_end_address), g2h((env->regs[15])));
-		
-		int ret = mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE);
+		fprintf(stderr, "[load_binary]\there: %x %x %x\n", g2h(binary_start_address), g2h(binary_end_address), g2h((thread_env->regs[15])));
+		int ret;
+		ret = mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE);
 		fprintf(stderr, "[load_binary]\tRet = %p\n", ret);
 		memcpy(g2h(binary_start_address), p, (unsigned int)binary_end_address - binary_start_address);
 		
-		fprintf(stderr, "[load_binary]\there: %d\n", *(uint32_t *) g2h(env->regs[15]));
-		disas(stderr, g2h(env->regs[15]), 10);
+		fprintf(stderr, "[load_binary]\there: %p\n", *(uint32_t *) g2h(thread_env->regs[15]));
+		disas(stderr, g2h(thread_env->regs[15]), 10);
 
 		fprintf(stderr, "[load_binary]\tcode: %x", *((uint32_t *) g2h(0x102fa)));
 		mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE | PROT_EXEC);
@@ -329,23 +276,24 @@ static void load_binary(void)
 }
 
 /* Initialize execution thread and go to cpu loop */
-static void* exec_func(void *arg)
+void exec_func(void)
 {
 	
 	offload_mode = 3;
-
-	//pthread_mutex_lock(&socket_mutex);
-	static int first = 1;
-	if (first == 1) {
-		offload_server_qemu_init();
-		first++;
-	}	
-	else {
-		//offload_server_extra_init();
-		offload_server_idx = first;
-	}
+	static int count_n = 0;
 	
-	fprintf(stderr, "[exec_func]\tguest_base: %x\n", guest_base);
+	//pthread_mutex_lock(&socket_mutex);
+	// static int first = 1;
+	// if (first == 1) {
+	// 	offload_server_qemu_init();
+	// 	first++;
+	// }	
+	// else {
+	// 	//offload_server_extra_init();
+	// 	offload_server_idx = first-1;
+	// }
+	
+	fprintf(stderr, "[exec_func]\tguest_base: %x count_n\n", guest_base, count_n);
 	p = net_buffer;
 	fprintf(stderr, "[exec_func]\tin exec func\n");
 	load_cpu();
@@ -358,35 +306,78 @@ static void* exec_func(void *arg)
 	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
 	fprintf(stderr, "[exec_func]\tready to CPU_LOOP\n");
 
-	fprintf(stderr, "[exec_func]\tPC: %p\n", env->regs[15]);
+	fprintf(stderr, "[exec_func]\tPC: %p\n", thread_env->regs[15]);
 	
 	
 	fprintf(stderr, "[exec_func]\tregisters:\n");
 	
 	for (int i = 0; i < 16; i++)
 	{
-		fprintf(stderr, "[exec_func]\t%p\n", env->regs[i]);
+		fprintf(stderr, "[exec_func]\t%p\n", thread_env->regs[i]);
 	}
 	//target_disas(stderr, ENV_GET_CPU(env), env->regs[15], 100);
 	//while (1) {;}
 
-	rcu_register_thread();
-	tcg_register_thread();
-
+	if (count_n != 0) {
+		fprintf(stderr, "[exec_func]\tAnother thread!!\n");
+		rcu_register_thread();
+		tcg_register_thread();
+		//sleep(99999);
+		cpu_loop(thread_env);
+	}
 	//pthread_mutex_unlock(&socket_mutex);
 	
-	//!! Just debug
-	cpu_loop(env);
+	count_n++;
+	//!! Just debugs
+	//sleep(199999);
+	cpu_loop(thread_env);
 	// here this thread reaches an end
-	
 		
 	return NULL;
 	 
 }
 
+// void *extra_exec_thread(void)
+// {
+// 	extern CPUArchState *env;
+// 	/* we create a new CPU instance. */
+// 	new_env = cpu_copy(env);
+// 	/* Init regs that differ from the parent.  */
+// 	cpu_clone_regs(new_env, newsp);
+// 	new_cpu = ENV_GET_CPU(new_env);
+// 	offload_mode = 6;
+// 	extern __thread int offload_thread_idx;
+// 	offload_thread_idx = 3;
+// 	fprintf(stderr, "[exec_func_init]\tWaiting for informations...\n");
+// 	fprintf(stderr, "[exec_func_init]\tStart Initializing... guest_base: %x\n", guest_base);
+// 	p = net_buffer;
+// 	fprintf(stderr, "[exec_func_init]\tin exec func\n");
+// 	load_cpu();
+// 	load_memory_region();
+// 	load_brk();
+// 	load_binary();
+// 	// it's go time!
+// 	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
+// 	fprintf(stderr, "[exec_func_init]\tready to CPU_LOOP\n");
+// 	fprintf(stderr, "[exec_func_init]\tPC: %p\n", env->regs[15]);	
+// 	fprintf(stderr, "[exec_func_init]\tregisters:\n");	
+// 	for (int i = 0; i < 16; i++)
+// 	{
+// 		fprintf(stderr, "[exec_func_init]\t%p\n", env->regs[i]);
+// 	}
+// 	//target_disas(stderr, ENV_GET_CPU(env), env->regs[15], 100);
+// 	//while (1) {;}
+// 	rcu_register_thread();
+// 	tcg_register_thread();
+// 	//pthread_mutex_unlock(&socket_mutex);
+// 	cpu_loop(env);
+// 	// here this thread reaches an end
+// 	return NULL;
+// }
 /* For extra exec. */
 void exec_func_init(void)
 {
+	//exec_func();
 	//guest_base = 0x3c00f000;
 	offload_mode = 6;
 	extern __thread int offload_thread_idx;
@@ -407,26 +398,27 @@ void exec_func_init(void)
 	fprintf(stderr, "[exec_func_init]\tStart Initializing... guest_base: %x\n", guest_base);
 
 	
+	
 	p = net_buffer;
 	fprintf(stderr, "[exec_func_init]\tin exec func\n");
 	load_cpu();
+	//sleep(100000);
 	// copy the start function address
-	;
-	load_memory_region();
-	load_brk();
-	load_binary();
+	// load_memory_region();
+	// load_brk();
+	// load_binary();
 	// it's go time!
 	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
 	fprintf(stderr, "[exec_func_init]\tready to CPU_LOOP\n");
 
-	fprintf(stderr, "[exec_func_init]\tPC: %p\n", env->regs[15]);
+	fprintf(stderr, "[exec_func_init]\tPC: %p\n", thread_env->regs[15]);
 	
 	
 	fprintf(stderr, "[exec_func_init]\tregisters:\n");
 	
 	for (int i = 0; i < 16; i++)
 	{
-		fprintf(stderr, "[exec_func_init]\t%p\n", env->regs[i]);
+		fprintf(stderr, "[exec_func_init]\t%p\n", thread_env->regs[i]);
 	}
 	//target_disas(stderr, ENV_GET_CPU(env), env->regs[15], 100);
 	//while (1) {;}
@@ -435,7 +427,7 @@ void exec_func_init(void)
 	tcg_register_thread();
 
 	//pthread_mutex_unlock(&socket_mutex);
-	cpu_loop(env);
+	cpu_loop(thread_env);
 	// here this thread reaches an end
 	
 		
@@ -479,7 +471,11 @@ static void offload_process_start(void)
 	pthread_t exec_thread;
 	fprintf(stderr, "[offload_process_start]\tcreate exec thread\n");
 	if (count == 0) {
-		pthread_create(&exec_thread, NULL, exec_func, NULL);
+		// pthread_create(&exec_thread, NULL, exec_func, NULL);
+		pthread_mutex_lock(&main_exec_mutex);
+		main_exec_flag = 1;
+		pthread_cond_broadcast(&main_exec_cond);
+		pthread_mutex_unlock(&main_exec_mutex);
 		count++;
 	}
 	else {
@@ -491,6 +487,7 @@ static void offload_process_start(void)
 		pthread_cond_broadcast(&exec_func_init_cond);
 		fprintf(stderr, "[offload_process_start]\tWake up please! %d\n", exec_ready_to_init);
 		pthread_mutex_unlock(&exec_func_init_mutex);
+		// pthread_create(&exec_thread, NULL, &extra_exec_thread, NULL);
 		
 	}
 	fprintf(stderr, "[offload_process_start]\texec thread created\n");
@@ -763,11 +760,11 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
     ftime(&t);
     siginfo_t *info = pinfo;
     ucontext_t *uc = (ucontext_t *)puc;
-    unsigned long host_addr = (unsigned long)info->si_addr;
+    void* host_addr = info->si_addr;
     //TODO ... do h2g on the host_addr to get the address of the segfault
 	
     unsigned long  guest_addr = h2g(host_addr);
-	fprintf(stderr, "[offload_segfault_handler]\tguest addr is %p, host_addr is %p, pte-0 %p, pte-1 %p, pte-2 %p, VP-2 %p, VP-1%p\n", 
+	fprintf(stderr, "[offload_segfault_handler]\tguest addr is %p, host_addr is %lp, pte-0 %p, pte-1 %p, pte-2 %p, VP-2 %p, VP-1%p\n", 
 			guest_addr, host_addr, pt_index(host_addr, 0), pt_index(host_addr, 1), pt_index(host_addr, 2), pt_index(VPTPTR, 2), pt_index(VPTPTR, 1));
 
 	target_ulong page_addr = guest_addr & TARGET_PAGE_MASK;
@@ -819,7 +816,7 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 		fprintf(stderr, "[offload_segfault_handler]\tsyscall segfault awake\n");
 	}
-	//fprintf(stderr, "[offload_segfault_handler]\t%p value is %d\n", guest_addr, *(uint32_t*)(g2h(guest_addr)));
+	//fprintf(stderr, "[offload_segfault_handler]\t%p value is %p\n", guest_addr, *(uint32_t*)(g2h(guest_addr)));
 	ftime(&tend);
 	int secDiff = tend.time - t.time;
 	secDiff *= 1000;
@@ -878,7 +875,7 @@ int offload_segfault_handler_positive(uint32_t page_addr, int perm)
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 		fprintf(stderr, "[offload_segfault_handler_positive]\tsyscall segfault awake\n");
 	}
-	fprintf(stderr, "[offload_segfault_handler_positive]\t%p value is %d\n", page_addr, *(uint32_t *)(g2h(page_addr)));
+	//fprintf(stderr, "[offload_segfault_handler_positive]\t%p value is %d\n", page_addr, *(uint32_t *)(g2h(page_addr)));
 	ftime(&tend);
 	int secDiff = tend.time - t.time;
 	secDiff *= 1000;
@@ -1103,6 +1100,16 @@ void* offload_center_server_start(void *arg)
 
 void offload_server_start(void)
 {
+	fprintf(stderr, "[offload_server_start]\tstart offload server\n");
+	//env = _env;
+	offload_server_init();
+	offload_server_daemonize();
+	
+}
+
+void* offload_server_start_thread(void* arg)
+{
+	offload_mode = 1;
 	fprintf(stderr, "[offload_server_start]\tstart offload server\n");
 	//env = _env;
 	offload_server_init();
@@ -1390,13 +1397,13 @@ static void offload_process_tid(void)
 	p += sizeof(uint32_t);
 	fprintf(stderr,"[offload_process_tid]\treceived child_tidptr: %p\n", tid);
 	return ;
-	//extern CPUArchState *env;
-	if (!env)
+	extern __thread CPUArchState *thread_env;
+	if (!thread_env)
 	{
-		fprintf(stderr,"[offload_process_tid]\tenv: %p\n", env);
-		assert(env);
+		fprintf(stderr,"[offload_process_tid]\tenv: %p\n", thread_env);
+		assert(thread_env);
 	}
-	CPUState *cpu = ENV_GET_CPU((CPUArchState *)env);
+	CPUState *cpu = ENV_GET_CPU((CPUArchState *)thread_env);
 	if (!cpu)
 	{
 		fprintf(stderr,"[offload_process_tid]\tcpu: %p\n", cpu);
@@ -1428,8 +1435,8 @@ static void offload_process_fork_info(void)
 	extern int do_fork_server_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr);
-	extern CPUArchState *env;
-	do_fork_server_local( env,   flags,  newsp,
+	extern CPUArchState *env_bak;
+	do_fork_server_local( env_bak,   flags,  newsp,
                     parent_tidptr,  newtls,
                     child_tidptr);
 	fprintf(stderr,"[offload_process_fork_info]\tDone.\n");

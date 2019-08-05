@@ -52,6 +52,7 @@ unsigned long guest_base;
 int have_guest_base;
 
 extern __thread int offload_mode; /* 1: server, 2: client  3: exec*/
+extern void exec_func(void);
 
 
 
@@ -618,12 +619,16 @@ static int parse_args(int argc, char **argv)
     return optind;
 }
 
-CPUArchState *env;
-CPUState cpu_backup;
+CPUArchState *env_bak;
+__thread CPUArchState *thread_env;
+//CPUState cpu_backup;
 extern void offload_server_start(void);
 int offload_count;
 extern void* offload_center_server_start(void*);
 extern void* offload_center_client_start(void*);
+pthread_mutex_t main_exec_mutex;
+pthread_cond_t main_exec_cond;
+int main_exec_flag;
 
 pthread_mutex_t offload_center_init_mutex; pthread_cond_t offload_center_init_cond;
 void offload_server_extra_init(void);
@@ -634,7 +639,7 @@ void offload_server_qemu_init(void)
     struct image_info info1, *info = &info1;
     struct linux_binprm bprm;
     TaskState *ts;
-    //CPUArchState *env;
+    CPUArchState *env;
     CPUState *cpu;
 
     char **target_environ, **wrk;
@@ -848,7 +853,7 @@ void offload_server_extra_init(void)
     struct image_info info1, *info = &info1;
     struct linux_binprm bprm;
     TaskState *ts;
-    //CPUArchState *env;
+    CPUArchState *env;
     CPUState *cpu;
 
     
@@ -869,7 +874,7 @@ int main(int argc, char **argv, char **envp)
     struct image_info info1, *info = &info1;
     struct linux_binprm bprm;
     TaskState *ts;
-    //CPUArchState *env;
+    CPUArchState *env;
     CPUState *cpu;
     int optind;
     char **target_environ, **wrk;
@@ -887,8 +892,8 @@ int main(int argc, char **argv, char **envp)
 	{
 		guest_base = 0x3c00f000;
         fprintf(stderr, ">>>>>>>>>>>> server# %d guest_base: %x\n", offload_server_idx, guest_base);
-		offload_server_start();
-		return 0;
+		// offload_server_start();
+		// return 0;
 	}
 	else if (offload_mode == 2)
 	{
@@ -1124,32 +1129,66 @@ int main(int argc, char **argv, char **envp)
         }
         gdb_handlesig(cpu, 0);
     }
+    env_bak = env;
+    thread_env = env;
+    if (offload_mode == 2) {
 
-	fprintf(stderr, "offload client mode\n");
-	
-	fprintf(stderr, "size: %x, mask: %x\n", qemu_host_page_size, qemu_host_page_mask);
-	offload_server_idx = 0;
-	offload_client_idx = 0;
-	offload_client_pmd_init();
-	
-	// if this is center, we need 2 more threads to play as worker/shadow.
-	
-	//new_thread_info new_info;
-	/*CPUArchState new_env;
-	offload_get_new_thread_info(env, &new_env);*/
-	//pthread_mutex_init(&offload_center_clone_mutex, NULL);
-	pthread_mutex_init(&offload_center_init_mutex, NULL);
-	pthread_cond_init(&offload_center_init_cond, NULL);
-	
-	pthread_create(&center_server_thread, NULL, offload_center_server_start, (void *) NULL);
-	
-	pthread_mutex_lock(&offload_center_init_mutex);
-	pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
-	pthread_mutex_unlock(&offload_center_init_mutex);
+        fprintf(stderr, "offload client mode\n");
+        
+        fprintf(stderr, "size: %x, mask: %x\n", qemu_host_page_size, qemu_host_page_mask);
+        offload_server_idx = 0;
+        offload_client_idx = 0;
+        offload_client_pmd_init();
+        
+        // if this is center, we need 2 more threads to play as worker/shadow.
+        
+        //new_thread_info new_info;
+        /*CPUArchState new_env;
+        offload_get_new_thread_info(env, &new_env);*/
+        //pthread_mutex_init(&offload_center_clone_mutex, NULL);
 
-	
+
+        pthread_mutex_init(&offload_center_init_mutex, NULL);
+        pthread_cond_init(&offload_center_init_cond, NULL);
+        
+        pthread_create(&center_server_thread, NULL, offload_center_server_start, (void *) NULL);
+        
+        pthread_mutex_lock(&offload_center_init_mutex);
+        pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
+        pthread_mutex_unlock(&offload_center_init_mutex);
+    }
+    if (offload_mode == 1)
+	{
+		guest_base = 0x3c00f000;
+        fprintf(stderr, ">>>>>>>>>>>> server# %d guest_base: %x "
+                        "sizeof envCPUArchState %d sizeof cpu CPUState %d\n", 
+                        offload_server_idx, guest_base, sizeof(CPUArchState), sizeof(CPUState));
+		
+        /* Create daemonize thread and wait to be ready. */
+        pthread_mutex_init(&main_exec_mutex, NULL);
+        pthread_cond_init(&main_exec_cond, NULL);
+        main_exec_flag = 0;
+        pthread_t server_t;
+        extern void *offload_server_start_thread(void*);
+        pthread_create(&server_t, NULL, offload_server_start_thread, NULL);
+        pthread_mutex_lock(&main_exec_mutex);
+        while (main_exec_flag == 0) {
+            pthread_cond_wait(&main_exec_cond, &main_exec_mutex);
+        }
+        pthread_mutex_unlock(&main_exec_mutex);
+        /* If this is our first additional thread, we need to ensure we
+         * generate code for parallel execution and flush old translations.
+         */
+        if (!parallel_cpus) {
+            parallel_cpus = true;
+            tb_flush(cpu);
+        }
+		exec_func();
+	}
 	offload_mode = 3;
-	cpu_loop(env);
+	
+    //sleep(1000000000);
+    cpu_loop(env);
     /* never exits */
     return 0;
 }
