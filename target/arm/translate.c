@@ -65,6 +65,16 @@ static TCGv_i32 cpu_R[16];
 TCGv_i32 cpu_CF, cpu_NF, cpu_VF, cpu_ZF;
 TCGv_i64 cpu_exclusive_addr;
 TCGv_i64 cpu_exclusive_val;
+TCGv_i64 false_sharing_addr[5];
+TCGv_i64 shadow_page_addr[5];
+static const char *false_sharing_names[] =
+    { "false_sharing_addr1", "false_sharing_addr2",
+      "false_sharing_addr3", "false_sharing_addr4",
+      "false_sharing_addr5" };
+static const char *shadow_page_names[] =
+    { "shadow_page_names1", "shadow_page_names2",
+      "shadow_page_names3", "shadow_page_names4",
+      "shadow_page_names5" };
 
 /* FIXME:  These should be removed.  */
 static TCGv_i32 cpu_F0s, cpu_F1s;
@@ -100,6 +110,12 @@ void arm_translate_init(void)
     cpu_exclusive_val = tcg_global_mem_new_i64(cpu_env,
         offsetof(CPUARMState, exclusive_val), "exclusive_val");
 
+    for (i = 0; i < 5; i++) {
+        false_sharing_addr[i] = tcg_global_mem_new_i64(cpu_env,
+        offsetof(CPUARMState, false_sharing_addr[i]), false_sharing_names[i]);
+        shadow_page_addr[i] = tcg_global_mem_new_i64(cpu_env,
+        offsetof(CPUARMState, shadow_page_addr[i]), shadow_page_names[i]);
+    }
     a64_translate_init();
 }
 
