@@ -27,15 +27,23 @@ static int exec_ready_to_init; static pthread_mutex_t exec_func_init_mutex; stat
 static void* exec_segfault_addr[MAX_OFFLOAD_THREAD_IN_NODE]; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
 static int syscall_time_sum;
+pthread_mutex_t page_process_mutex;
+
 
 /* Init Page Info Table. */
 void offload_server_pmd_init(void)
 {
+	int init_val;
+	/* Master has all the privilege at first. */
+	if (offload_server_idx > 0)
+		init_val = 0;
+	else
+		init_val = 2;
 	for (int i = 0; i < L1_MAP_TABLE_SIZE; i++)
 	{
 		for (int j = 0; j < L2_MAP_TABLE_SIZE; j++)
 		{
-			page_map_table_s[i][j].cur_perm = 0;
+			page_map_table_s[i][j].cur_perm = init_val;
 			//fprintf(stderr, "%d", page_map_table[i][j].owner_set.size);
 		}
 	}
@@ -112,6 +120,8 @@ static void offload_server_init(void)
 	pthread_mutex_init(&exec_func_init_mutex, NULL);
 	pthread_cond_init(&exec_func_init_cond, NULL);
 	pgfault_time_sum = 0;
+	offload_server_pmd_init();
+	pthread_mutex_init(&page_process_mutex, NULL);
 
 }
 
@@ -717,6 +727,7 @@ static void offload_process_page_content(void)
 
 void offload_page_recv_wake_up_thread(uint32_t page_addr, int perm)
 {
+	pthread_mutex_lock(&page_process_mutex);
 	int i = 0;
 	for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
 		if (page_addr == exec_segfault_addr[i]) {
@@ -739,6 +750,7 @@ void offload_page_recv_wake_up_thread(uint32_t page_addr, int perm)
 	/* Update server's page map. */
 	PageMapDesc_server* pmd = get_pmd_s(page_addr);
 	pmd->cur_perm = perm;
+	pthread_mutex_unlock(&page_process_mutex);
 }
 
 /* send |CONTENT|page|perm|content| */
@@ -810,22 +822,25 @@ pt_index(unsigned long addr, int level)
 
 void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 {
+	//TODO So maybe we deal with syscall in the future (must implement pmd_init)
+	//Check if we already have the page.
+	pthread_mutex_lock(&page_process_mutex);
+	PageMapDesc_server *pmd = get_pmd_s(page_addr);
+	if (pmd->cur_perm >= perm) {
+		fprintf(stderr, "[offload_send_page_request_and_wait]\tI think we already have the page.\n");
+		pthread_mutex_unlock(&page_process_mutex);
+		return;
+	}
 	if (offload_mode != 4)
 	{		
-		//TODO So maybe we deal with syscall in the future (must implement pmd_init)
-		//Check if we already have the page.
-		PageMapDesc_server *pmd = get_pmd_s(page_addr);
-		if (pmd->cur_perm >= perm) {
-			fprintf(stderr, "[offload_send_page_request_and_wait]\tI think we already have the page.\n");
-			return;
-		}
+		
 		pthread_mutex_lock(&page_recv_mutex[offload_thread_idx]);
 		//!!! Dangerous! If others have sent this and is waiting, just don not send again. But race condition could happen.
 		int have_already_requested = 0;
 		int i;
 		{
 			for (i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
-				if (page_recv_flag[i] == 0 && exec_segfault_addr[i] == page_addr) {
+				if (page_recv_flag[i] == 0 && exec_segfault_addr[i] == page_addr && page_addr > 0) {
 					have_already_requested = 1;
 					break;
 				}
@@ -840,6 +855,7 @@ void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 		exec_segfault_addr[offload_thread_idx] = page_addr;
 		page_recv_flag[offload_thread_idx] = 0;
 		//TODO check if 
+		pthread_mutex_unlock(&page_process_mutex);
 		while (page_recv_flag[offload_thread_idx] == 0)
 		{
 			pthread_cond_wait(&page_recv_cond[offload_thread_idx], &page_recv_mutex[offload_thread_idx]);
@@ -859,6 +875,7 @@ void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 		offload_server_send_page_request(page_addr, perm); 
 		//offload_server_send_page_request(page_addr, 2);
 		fprintf(stderr, "[offload_segfault_handler]\tsent page REQUEST %x, wait, sleeping\n", page_addr);
+		pthread_mutex_unlock(&page_process_mutex);
 		while (page_syscall_recv_flag == 0)
 		{
 			pthread_cond_wait(&page_syscall_recv_cond, &page_syscall_recv_mutex);
