@@ -102,6 +102,7 @@
 #include "linux_loop.h"
 #include "uname.h"
 #include "qemu.h"
+#include "offload_client.h"
 static void offload_send_mutex_verified(int);
 
 static void offload_process_mutex_done(void);
@@ -116,7 +117,7 @@ static int try_recv(int);
 static int communication_send_sum, communication_recv_sum;
 static pthread_mutex_t g_cas_mutex = PTHREAD_MUTEX_INITIALIZER;
 extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
-extern int thread_pos[32];
+extern int gst_thrd_plc[32];
 int syscall_started_flag;
 int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2,
 							uint32_t uaddr2, int val3, int idx, int thread_id);
@@ -126,6 +127,14 @@ struct info
 	int requestor_idx,perm;
 	target_ulong addr;
 };
+/* Guest thread placement information. */
+typedef struct {
+    int server_idx;
+    int thread_idx;
+} gst_thrd_info_t;
+extern gst_thrd_info_t gst_thrd_info[32];
+/* In syscall.c, to determine which thread is being creating. */
+extern int thread_count;
 
 struct syscall_param
 {
@@ -270,6 +279,8 @@ typedef struct PageMapDesc {
 	int invalid_count;					/* How many we should tell to invalidate */
 	int cur_perm;
 	req_node list_head; 				/* to record request list */
+	int is_false_sharing;
+	uint32_t shadow_page_addr;
 } PageMapDesc;
 
 PageMapDesc page_map_table[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section"))) __attribute__ ((aligned(4096))) = {0};
@@ -296,7 +307,7 @@ static void dump_cpu(void);
 static int dump_self_maps(void);
 static void dump_brk(void);
 static void dump_code(void);
-static void offload_send_start(void);
+static void offload_send_start(int);
 static void offload_send_page_upgrade(int idx, target_ulong page_addr, int);
 
 static void offload_process_page_request(void);
@@ -347,11 +358,10 @@ extern void offload_server_qemu_init(void);
 
 static void offload_client_init(void)
 {
-	//offload_server_qemu_init();	//hack, using this func without changing its name
 	pthread_mutex_lock(&offload_count_mutex);
 	offload_count++;
+	assert(offload_count == offload_client_idx);
 	offload_client_idx = offload_count;
-
 	pthread_mutex_unlock(&offload_count_mutex);
 
 	fprintf(stderr, "[offload_client_init]\tindex: %d\n", offload_client_idx);
@@ -668,7 +678,7 @@ static void offload_send_extra_start(int idx)
 
 }
 /* Dump the informations and send to slave QEMU. */
-static void offload_send_start(void)
+static void offload_send_start(int first)
 {
 	fprintf(stderr, "[client]\tsending offload start request\n");
 	int res;
@@ -680,15 +690,17 @@ static void offload_send_start(void)
 	{
 		fprintf(stderr, "%p\n", client_env->regs[i]);
 	}
-	dump_self_maps();
-	dump_brk();
-	dump_code();
+	if (first) {
+		dump_self_maps();
+		dump_brk();
+		dump_code();
+	}
 	fprintf(stderr, "[client]\tPC: %d\n", client_env->regs[15]);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) net_buffer;
 	fill_tcp_header(tcp_header, p - net_buffer - sizeof(struct tcp_msg_header), TAG_OFFLOAD_START);
 	fprintf(stderr, "sending buffer len without header: %lx\n", p - net_buffer - sizeof(struct tcp_msg_header));
 	fprintf(stderr, "sending buffer len: %ld\n", p - net_buffer);
-	if (offload_client_idx != 1) {
+	if (offload_client_idx != 1 && 0) {
 		res = autoSend(1, net_buffer, (p - net_buffer), 0);
 		//pthread_exit(0);
 		return;
@@ -1124,6 +1136,7 @@ static void offload_process_mutex_request(void)
 	pthread_mutex_unlock(&g_cas_mutex);
 }
 
+/* Broadcast false sharing page. */
 
 /* fetch page */
 static void offload_process_page_request(void)
@@ -1156,8 +1169,17 @@ static void offload_process_page_request(void)
 		int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
 		/* limit the prefetch count to avoid too much thread at a time */
 		prefetch_count = prefetch_count > 500 ? 500 : prefetch_count;
+		/* We create new shadow page mappings for the false sharing page. */
 		if (prefetch_count < 0) {
-			
+			PageMapDesc *pmd = get_pmd(page_addr);
+			pmd->is_false_sharing = 1;
+			uint32_t shadow_page_addr = page_addr - 0x60000000;
+			shadow_page_addr = target_mmap(shadow_page_addr, 64*PAGE_SIZE, PROT_READ|PROT_WRITE,
+								MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+			fprintf(stderr, "[offload_process_page_request client#%d]\t"
+							"Created shadow pages, base = %p\n", 
+							offload_client_idx, shadow_page_addr);
+			pmd->shadow_page_addr = shadow_page_addr;
 		}
 		if (prefetch_count > 0 && perm == 2) {
 			fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
@@ -1821,21 +1843,24 @@ void* thread_end_cleanup(CPUArchState *the_env)
 
 void offload_client_start(CPUArchState *the_env)
 {
-
+	assert(thread_count >= 0);
+	int server_idx = gst_thrd_info[thread_count].server_idx,
+	    thread_idx = gst_thrd_info[thread_count].thread_idx;
 	offload_mode = 2;
-
-	p = BUFFER_PAYLOAD_P;
-
-	//pthread_mutex_init(&page_request_map_mutex[offload_client_idx], NULL);
-
-
-	fprintf(stderr, "[offload_client_start]\tinitialize\n");
-	offload_client_init();
-
-
-	int res;
+	offload_client_idx = server_idx;
 	client_env = the_env;
-	offload_send_start();
+	fprintf(stderr, "[offload_client_start]\tguest thread %d : %d->%d\n",
+	                thread_count, server_idx, thread_idx);
+	p = BUFFER_PAYLOAD_P;
+	/* The first need to build the connection to a server. */
+	if (thread_idx == 0) {
+		fprintf(stderr, "[offload_client_start]\tinitialize\n");
+		offload_client_init();
+		offload_send_start(1);
+	}
+	else {
+		offload_send_start(0);
+	}
 	fprintf(stderr, "[offload_client_start]\tSent. returning..\n");
 	return;
 }
@@ -1863,7 +1888,6 @@ void offload_syscall_daemonize_start(CPUArchState *the_env)
 
 
 	fprintf(stderr, "[offload_syscall_daemonize_start]\tinitialize");
-	//offload_client_init();
 
 	pthread_mutex_init(&do_syscall_mutex,NULL);
 	pthread_cond_init(&do_syscall_cond,NULL);
@@ -2350,7 +2374,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		if (p->page_addr == page_addr) {
 			p->life += PREFETCH_LIFE;
 			if (++p->page_hit_count >= 10) {
-				fprintf(stderr, "[prefetch_handler]\tConflict page %p found! Not implemented!\n", page_addr);
+				fprintf(stderr, "[prefetch_handler]\tConflict page %p found!\n", page_addr);
 				
 				//return 0;
 			}

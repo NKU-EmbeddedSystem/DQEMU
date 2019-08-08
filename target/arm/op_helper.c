@@ -1517,4 +1517,5 @@ uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
         }
     }
     addr = newaddr;
+    return addr;
 }

@@ -6435,6 +6435,8 @@ static void *clone_func_syscall(void *arg)
     return NULL;
 }
 
+extern void offload_client_daemonize(void);
+extern void close_network(void);
 static void *clone_func(void *arg)
 {
     new_thread_info *info = arg;
@@ -6460,12 +6462,9 @@ static void *clone_func(void *arg)
         put_user_u32(info->tid, info->parent_tidptr);
     /* Enable signals.  */
     sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
-	
-    
-    //cpu_loop(env);
 
-    
-    /* Wait untill syscall thread is ready. */
+    /* Wait untill syscall thread is ready. 
+     * Note: only create syscall thread once.*/
     static int count_n = 0;
     if (count_n == 0) {
         pthread_mutex_lock(&syscall_clone_mutex);
@@ -6476,10 +6475,9 @@ static void *clone_func(void *arg)
         pthread_mutex_unlock(&syscall_clone_mutex);
         count_n++;
     }
-    offload_client_start(info->env);
+    offload_client_start(env);
     fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     /* Signal to the parent that we're ready.  */
-    fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     pthread_mutex_lock(&info->mutex);
     pthread_cond_broadcast(&info->cond);
     pthread_mutex_unlock(&info->mutex);
@@ -6487,19 +6485,12 @@ static void *clone_func(void *arg)
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
     
-    
-    extern void offload_client_daemonize(void);
-    extern void close_network(void);
     if (offload_client_idx > 1) {
         pthread_exit(NULL);
     }
     offload_client_daemonize();
-
 	fprintf(stderr, "[offload_client_start in syscall]\tready to close network\n");
-
 	close_network();
-
-
 	printf("[offload_client_start in syscall]\toffloading finished\n");
     /* never exits */
     return NULL;
@@ -6513,8 +6504,11 @@ static void *clone_func_local(void *arg)
     TaskState *ts;
     extern __thread int offload_mode;
     extern int offload_server_idx;
-    offload_mode = 6;
-
+    extern __thread int offload_thread_idx;
+    static ncount = 0;
+    offload_mode = 3;
+    ncount++;
+    offload_thread_idx = ncount;
     rcu_register_thread();
     tcg_register_thread();
     env = info->env;
@@ -7085,6 +7079,16 @@ void offload_get_new_thread_info(CPUArchState *env, CPUArchState *res)
 }
 /* do_fork() Must return host values and target errnos (unlike most
    do_*() functions). */
+typedef struct {
+    int server_idx;
+    int thread_idx;
+} gst_thrd_info_t;
+extern gst_thrd_info_t gst_thrd_info[32];
+extern void offload_send_do_fork_info(int idx,
+        unsigned int flags, abi_ulong newsp,
+        abi_ulong parent_tidptr, target_ulong newtls,
+        abi_ulong child_tidptr);
+int thread_count = -1;
 static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr)
@@ -7105,28 +7109,24 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         flags &= ~(CLONE_VFORK | CLONE_VM);
 
     if (flags & CLONE_VM) {
-
-        extern int thread_pos[32];
-        static func_count = 0;
-        //func_count++;
-        //if (thread_pos[func_count])
-        if (func_count != 0) {
-            // return do_fork_local(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
-            //return do_fork_remote(env, flags, newsp, parent_tidptr, newtls, child_tidptr);
-
-            fprintf(stderr, "[do_fork]\tfunc_count: %d\n", func_count);
-            extern void offload_send_do_fork_info(int idx, unsigned int flags, abi_ulong newsp,
-                    abi_ulong parent_tidptr, target_ulong newtls,
-                    abi_ulong child_tidptr);
-            
-            offload_send_do_fork_info(1, flags, newsp,
-                    parent_tidptr,  newtls,
-                        child_tidptr);
+        /* Using thread_count to know which thread we're creating. */
+        thread_count++;
+        int server_idx = gst_thrd_info[thread_count].server_idx,
+            thread_idx = gst_thrd_info[thread_count].thread_idx;
+        fprintf(stderr, "[do_fork]\tguest thread %d : %d->%d\n",
+                        thread_count, server_idx, thread_idx);
+        /* Determine to create in local or offload to remote server. */
+        if (server_idx == 0) {
+            fprintf(stderr, "[do_fork]\tFork in local...\n");
+            return do_fork_local(env, flags, newsp, parent_tidptr, 
+                                    newtls, child_tidptr);
         }
-        else {
-            func_count ++;
+        else if (server_idx > 0) {
+            fprintf(stderr, "[do_fork]\tOffload to server #%d\n",
+                            server_idx);
+            offload_send_do_fork_info(server_idx, flags, newsp,
+                    parent_tidptr, newtls, child_tidptr);
         }
-
 
         TaskState *parent_ts = (TaskState *)cpu->opaque;
         new_thread_info info;
@@ -7201,7 +7201,8 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         if (is_first)
         {
             pthread_t syscall_init;
-            ret = pthread_create(&syscall_init, &attr, clone_func_syscall, &info);
+            ret = pthread_create(&syscall_init, &attr, clone_func_syscall, 
+                                &info);
             //pthread_join(syscall_init, NULL);
             offload_log(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
             is_first = 0;

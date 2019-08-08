@@ -426,11 +426,10 @@ void exec_func_init(void)
 	*  Extra exec thread ID starts at 1.
 	*  The initial exec is 0.
 	*/
-	offload_mode = 6;
+	offload_mode = 3;
 	extern __thread int offload_thread_idx;
-	static int ncount = 1;
+	static int ncount = 0;
 	offload_thread_idx = ncount;
-	ncount++;
 	fprintf(stderr, "[exec_func_init]\tWaiting for informations...\n");
 	/* Once the thread reaches here, set the exec_read_to_init to 1.
 	 * wait the flag to be 2 indicating initialization info is ready. */
@@ -453,9 +452,11 @@ void exec_func_init(void)
 	load_cpu();
 	//sleep(100000);
 	// copy the start function address
-	// load_memory_region();
-	// load_brk();
-	// load_binary();
+	if (ncount == 0) {
+		load_memory_region();
+		load_brk();
+		load_binary();
+	}
 	// it's go time!
 	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
 	fprintf(stderr, "[exec_func_init]\tready to CPU_LOOP\n");
@@ -474,6 +475,7 @@ void exec_func_init(void)
 
 	rcu_register_thread();
 	tcg_register_thread();
+	ncount++;
 
 	//pthread_mutex_unlock(&socket_mutex);
 	cpu_loop(thread_env);
@@ -519,7 +521,7 @@ static void offload_process_start(void)
 	static int count = 0;
 	pthread_t exec_thread;
 	fprintf(stderr, "[offload_process_start]\tcreate exec thread\n");
-	if (count == 0) {
+	if (count == 0 && 0) {
 		// pthread_create(&exec_thread, NULL, exec_func, NULL);
 		pthread_mutex_lock(&main_exec_mutex);
 		main_exec_flag = 1;
@@ -1444,8 +1446,8 @@ static void offload_process_fork_info(void)
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr);
 	extern CPUArchState *env_bak;
-	do_fork_server_local( env_bak,   flags,  newsp,
-                    parent_tidptr,  newtls,
+	do_fork_server_local(env_bak, flags, newsp,
+                    parent_tidptr, newtls,
                     child_tidptr);
 	fprintf(stderr,"[offload_process_fork_info]\tDone.\n");
 
