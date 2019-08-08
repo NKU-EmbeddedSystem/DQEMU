@@ -6490,6 +6490,9 @@ static void *clone_func(void *arg)
     
     extern void offload_client_daemonize(void);
     extern void close_network(void);
+    if (offload_client_idx > 1) {
+        pthread_exit(NULL);
+    }
     offload_client_daemonize();
 
 	fprintf(stderr, "[offload_client_start in syscall]\tready to close network\n");

@@ -1484,3 +1484,37 @@ void HELPER(offload_cpu_exclusive_insight)(uint32_t val, uint32_t addr)
     //*(uint32_t *)(g2h(addr)) = t;
     //fprintf(stderr, "helper_offload_load_exclusive\taddr:%p\n", addr);
 }
+int fs_flag = 1;
+int fs_addr[5];
+int fs_new[5];
+
+void HELPER(print_aa32_addr)(uint32_t addr)
+{
+    if (!fs_flag) {
+        return;
+    }
+    //extern int offload_server_idx;
+    //if (offload_server_idx > 0)
+    //fprintf(stderr, "[print_aa32_addr]\taa32 addr = %x\n", a32);
+
+    
+}
+
+uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
+{
+    /* If there's no false sharing, simply return ASAP. */
+    if (!fs_flag) {
+        return addr;
+    }
+    // TODO maybe we can have a 'page cache' here
+    
+    uint32_t page_addr = addr & 0xfffff000;
+    uint32_t page_off = addr & 0xfff;
+    uint32_t newaddr;
+    for (int i = 0; i < 5; i++) {
+        if (page_addr == fs_addr[i]) {
+            newaddr = fs_new[i] + (page_off / 64) * 0x1000 + page_off;
+        }
+    }
+    addr = newaddr;
+}

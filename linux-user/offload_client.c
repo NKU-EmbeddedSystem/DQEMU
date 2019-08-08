@@ -434,14 +434,18 @@ static void offload_client_init(void)
 
 	bzero(&(server_addr.sin_zero), 8);
 	int struct_len = sizeof(struct sockaddr_in);
+	static int ncount = 0;
+	if (ncount < 2) {
 
-	//fprintf(stderr, "[client]\toffload index: %d\n", offload_client_idx);
-	fprintf(stderr, "[offload_client_init]\tconnecting to server, port# %d\n", server_port_of(offload_client_idx));
-	if (connect(skt[offload_client_idx],(struct sockaddr*) &server_addr, struct_len) == -1)
-	{
-		fprintf(stderr, "[offload_client_init]\tconnect port# %d failed, errno: %d\n", server_port_of(offload_client_idx), errno);
-		perror("connect");
-		exit(0);
+		//fprintf(stderr, "[client]\toffload index: %d\n", offload_client_idx);
+		fprintf(stderr, "[offload_client_init]\tconnecting to server, port# %d\n", server_port_of(offload_client_idx));
+		if (connect(skt[offload_client_idx],(struct sockaddr*) &server_addr, struct_len) == -1)
+		{
+			fprintf(stderr, "[offload_client_init]\tconnect port# %d failed, errno: %d\n", server_port_of(offload_client_idx), errno);
+			perror("connect");
+			exit(0);
+		}
+		ncount ++;
 	}
 
 	fprintf(stderr,"[offload_client_init]\tconnecting succeed, client index# %d, skt: %d\n", offload_client_idx, skt[offload_client_idx]);
