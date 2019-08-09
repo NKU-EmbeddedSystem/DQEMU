@@ -121,6 +121,8 @@ extern int gst_thrd_plc[32];
 int syscall_started_flag;
 int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2,
 							uint32_t uaddr2, int val3, int idx, int thread_id);
+void offload_connect_online_server(int idx);
+
 //int requestor_idx, target_ulong addr, int perm
 struct info
 {
@@ -315,7 +317,7 @@ void* offload_client_daemonize(void);
 static void offload_client_send_futex_wake_result(int result);
 //int client_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc);
 
-void offload_client_start(CPUArchState *the_env);
+int offload_client_start(CPUArchState *the_env);
 void* offload_center_client_start(void*);
 static void offload_send_page_request(int idx, target_ulong guest_addr, uint32_t perm,int );
 static void offload_send_page_content(int idx, target_ulong guest_addr, uint32_t perm, char *content);
@@ -356,75 +358,26 @@ void offload_client_pmd_init(void)
 
 extern void offload_server_qemu_init(void);
 
-static void offload_client_init(void)
+/* Connect the target server. */
+void offload_connect_online_server(int idx)
 {
-	pthread_mutex_lock(&offload_count_mutex);
-	offload_count++;
-	assert(offload_count == offload_client_idx);
-	offload_client_idx = offload_count;
-	pthread_mutex_unlock(&offload_count_mutex);
-
-	fprintf(stderr, "[offload_client_init]\tindex: %d\n", offload_client_idx);
-
-	
-	skt[offload_client_idx] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	skt[idx] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	struct sockaddr_in server_addr, client_addr;
 	server_addr.sin_family = AF_INET;
-	server_addr.sin_port = htons(server_port_of(offload_client_idx));
+	server_addr.sin_port = htons(server_port_of(idx));
 	char* ip_addr;
-	switch (offload_client_idx)
+	switch (idx)
 	{
 		case 0:
 			ip_addr = "127.0.0.1";
 			break;
 		case 1:
 		case 2:
-			//ip_addr = "192.168.1.101";
-			ip_addr = "127.0.0.1";
-			break;
-		//case 2:
-		case 3:
-		case 4:
-			ip_addr = "127.0.0.1";
-			break;
-		case 5:
-		case 6:
-		case 7:
-		case 8:
-			ip_addr = "10.134.76.146";
-			break;
-		case 9:
-		case 10:
-		case 11:
-		case 12:
-			ip_addr = "10.134.43.199";
-			break;
 		default:
 			ip_addr = "10.134.101.9";
 			break;
 	}
-	//ip_addr = "127.0.0.1";
-	// if (offload_client_idx == 0)
-	// {
-	// 	ip_addr = "192.168.1.107";
-	// }
-	// else if (offload_client_idx<=3)
-	// {
-	// 	ip_addr = "10.134.83.158";
-	// }
-	// else if (offload_client_idx<=6)
-	// {
-	// 	ip_addr = "192.168.1.100";
-	// }
-	// else if (offload_client_idx<=16)
-	// {
-	// 	ip_addr = "192.168.1.107";
-	// }
-	// else if (offload_client_idx<=7+2)
-	// {
-
-	// }
-	 	ip_addr = "127.0.0.1";
+	ip_addr = "127.0.0.1";
 
 	//检索服务器的ip地址
 	unsigned long dst_ip;
@@ -436,7 +389,7 @@ static void offload_client_init(void)
 		fprintf(stderr,"gethostbyname error\n");
 		exit(-2);
 		}
-		fprintf(stderr, "[offload_client_init]\tgot host name %s, h_addrtype %d, h_addr: %p\n", he->h_name, he->h_addrtype, he->h_addr);
+		fprintf(stderr, "[offload_connect_online_server]\tgot host name %s, h_addrtype %d, h_addr: %p\n", he->h_name, he->h_addrtype, he->h_addr);
 		memcpy((char *)&dst_ip,(char *)he->h_addr,sizeof(he->h_addr));
 	}
 	//server_addr.sin_addr.s_addr = inet_addr(ip_addr);
@@ -444,29 +397,40 @@ static void offload_client_init(void)
 
 	bzero(&(server_addr.sin_zero), 8);
 	int struct_len = sizeof(struct sockaddr_in);
-	static int ncount = 0;
-	if (ncount < 2) {
-
-		//fprintf(stderr, "[client]\toffload index: %d\n", offload_client_idx);
-		fprintf(stderr, "[offload_client_init]\tconnecting to server, port# %d\n", server_port_of(offload_client_idx));
-		if (connect(skt[offload_client_idx],(struct sockaddr*) &server_addr, struct_len) == -1)
+	//static int ncount = 0;
+	//if (ncount < 2) {
+		//fprintf(stderr, "[client]\toffload index: %d\n", idx);
+		fprintf(stderr, "[offload_connect_online_server]\tconnecting to server, port# %d\n"
+						, server_port_of(idx));
+		if (connect(skt[idx],(struct sockaddr*) &server_addr, struct_len) == -1)
 		{
-			fprintf(stderr, "[offload_client_init]\tconnect port# %d failed, errno: %d\n", server_port_of(offload_client_idx), errno);
+			fprintf(stderr, "[offload_connect_online_server]\tconnect port# %d failed, errno: %d\n"
+							, server_port_of(idx), errno);
 			perror("connect");
-			exit(0);
+			exit(1);
 		}
-		ncount ++;
-	}
+	//	ncount ++;
+	//}
 
-	fprintf(stderr,"[offload_client_init]\tconnecting succeed, client index# %d, skt: %d\n", offload_client_idx, skt[offload_client_idx]);
+	fprintf(stderr,"[offload_connect_online_server]\tconnecting succeed, "
+					"client index# %d, skt: %d\n", idx, skt[idx]);
 
-	//NONBLOCK receive
-	//fcntl(skt[offload_client_idx], F_SETFL, fcntl(skt[offload_client_idx], F_GETFL) | O_NONBLOCK);
-	//struct timeval timeout={1, 0};
-	//int ret = setsockopt(skt[offload_client_idx], SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+#ifdef NONBLOCK_RECEIVE
+	NONBLOCK receive
+	fcntl(skt[idx], F_SETFL, fcntl(skt[idx], F_GETFL) | O_NONBLOCK);
+	struct timeval timeout={1, 0};
+	int ret = setsockopt(skt[idx], SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+#endif
+}
+static void offload_client_init(void)
+{
+	pthread_mutex_lock(&offload_count_mutex);
+	offload_count++;
+	assert(offload_count == offload_client_idx);
+	offload_client_idx = offload_count;
+	pthread_mutex_unlock(&offload_count_mutex);
 
-	
-
+	fprintf(stderr, "[offload_client_init]\tindex: %d\n", offload_client_idx);
 	pthread_mutex_init(&page_recv_mutex, NULL);
 	pthread_cond_init(&page_recv_cond, NULL);
 	pthread_mutex_init(&send_mutex[offload_client_idx], NULL);
@@ -1266,6 +1230,7 @@ void* offload_client_daemonize(void)
 			if (tcp_header->magic_nr!=COMM_MAGIC_NR)
 			{
 				fprintf(stderr, "[offload_client_daemonize]\ttcp_header->magic_nr == %p??\n", tcp_header->magic_nr);
+				exit(3);
 			}
 			switch (tcp_header->tag)
 			{
@@ -1346,6 +1311,7 @@ void* offload_center_client_start(void *arg)
 	//sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
 	//CPUArchState *env = (CPUArchState *) arg;
 	log = fopen("pageReqLog.txt", "w");
+	offload_connect_online_server(0);
 	offload_client_init();
 	pthread_mutex_lock(&offload_center_init_mutex);
 	pthread_cond_signal(&offload_center_init_cond);
@@ -1841,7 +1807,11 @@ void* thread_end_cleanup(CPUArchState *the_env)
 	//			NULL, NULL, 0);
 }
 
-void offload_client_start(CPUArchState *the_env)
+/* Initiate client daemonize. 
+ * Return value 
+ * 0: this is the first thread in a server, keep it as daemonize;
+ * 1: this is not the first. */
+int offload_client_start(CPUArchState *the_env)
 {
 	assert(thread_count >= 0);
 	int server_idx = gst_thrd_info[thread_count].server_idx,
@@ -1862,7 +1832,7 @@ void offload_client_start(CPUArchState *the_env)
 		offload_send_start(0);
 	}
 	fprintf(stderr, "[offload_client_start]\tSent. returning..\n");
-	return;
+	return (thread_idx == 0) ? 0 : 1;
 }
 
 void offload_syscall_daemonize_start(CPUArchState *the_env)

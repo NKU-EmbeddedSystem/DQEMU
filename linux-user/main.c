@@ -1175,6 +1175,11 @@ int main(int argc, char **argv, char **envp)
         pthread_mutex_lock(&offload_center_init_mutex);
         pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
         pthread_mutex_unlock(&offload_center_init_mutex);
+        fprintf(stderr, "Connecting online server\n");
+        for (int i = 1; i < 3; i++) {
+            extern void offload_connect_online_server(int idx);
+            offload_connect_online_server(i);
+        }
     }
     if (offload_mode == 1)
 	{

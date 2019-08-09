@@ -6372,7 +6372,7 @@ typedef struct {
     sigset_t sigmask;
 } new_thread_info;
 
-extern void offload_client_start(CPUArchState*);
+extern int offload_client_start(CPUArchState*);
 extern void offload_syscall_daemonize_start(CPUArchState*);
 extern __thread int offload_client_idx;
 extern pthread_mutex_t syscall_clone_mutex;
@@ -6475,7 +6475,7 @@ static void *clone_func(void *arg)
         pthread_mutex_unlock(&syscall_clone_mutex);
         count_n++;
     }
-    offload_client_start(env);
+    int to_exit = offload_client_start(env);
     fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     /* Signal to the parent that we're ready.  */
     pthread_mutex_lock(&info->mutex);
@@ -6485,7 +6485,7 @@ static void *clone_func(void *arg)
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
     
-    if (offload_client_idx > 1) {
+    if (to_exit) {
         pthread_exit(NULL);
     }
     offload_client_daemonize();
