@@ -145,7 +145,7 @@ static void load_cpu(void)
 	p += sizeof(CPUARMState);
 	
 
-	fprintf(stderr,"[load_cpu]\tenv: %p\n", thread_env);
+	fprintf(stderr,"[load_cpu]\tthread_env: %p\n", thread_env);
 	CPUState *cpu = ENV_GET_CPU(thread_env);
 	// extern CPUArchState *thread_cpu;
 	extern __thread CPUState *thread_cpu;
@@ -163,6 +163,7 @@ static void load_cpu(void)
 	p += sizeof(TaskState);
 	cpu->opaque = ts;
 	fprintf(stderr,"[load_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+	assert(ts->child_tidptr);
 	/*vfp_set_fpscr(env, *((uint32_t*) p));
 	fprintf(stderr, "fpscr: %d\n", *((uint32_t*) p));
 	p += sizeof(uint32_t);
@@ -238,17 +239,15 @@ static void load_memory_region(void)
 		}
 		if (mapped_flag)
 			continue;
-		if (first)
-		{
-			/* Now we map the region. */
-			fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
-			mapped[mapped_count++] = addr;
+		/* Now we map the region. */
+		fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
+		mapped[mapped_count++] = addr;
 
-			int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
-								MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-			fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
-			//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
-		}
+		int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
+							MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
+		assert(ret == addr);
+		//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
     }
 	first = 0;
 }
@@ -271,8 +270,10 @@ static void load_brk(void)
 				target_mmap_return = target_mmap(old_brk, (unsigned int)current_brk - old_brk,
 												PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 				mprotect(g2h(old_brk), (unsigned int)current_brk - old_brk, PROT_NONE);
-				if (target_mmap_return != old_brk)
+				if (target_mmap_return != old_brk) {
 					fprintf(stderr, "[load_brk]\ttarget_mmap  failed at start of ProcessOffloadStart, returns %x\n", target_mmap_return);
+					exit(2);
+				}
 			}
 			else
 			{
@@ -280,6 +281,7 @@ static void load_brk(void)
 				if (ret) 
 				{
 					fprintf(stderr, "[load_brk]\tThe munmap failed at the start of ProcessOffloadStart : %d \n", ret);
+					exit(2);
 				}
 			}
 		}
@@ -438,6 +440,7 @@ void exec_func_init(void)
 	pthread_cond_broadcast(&exec_func_init_cond);
 	while (exec_ready_to_init != 2) {
 		fprintf(stderr, "[exec_func_init]\tWaiting for informations...NOT READY%d\n", exec_ready_to_init);
+
 		pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
 	}
 	pthread_mutex_unlock(&exec_func_init_mutex);
@@ -476,6 +479,11 @@ void exec_func_init(void)
 	rcu_register_thread();
 	tcg_register_thread();
 	ncount++;
+
+	pthread_mutex_lock(&exec_func_init_mutex);
+	exec_ready_to_init = 3;
+	pthread_cond_broadcast(&exec_func_init_cond);
+	pthread_mutex_unlock(&exec_func_init_mutex);
 
 	//pthread_mutex_unlock(&socket_mutex);
 	cpu_loop(thread_env);
@@ -542,6 +550,14 @@ static void offload_process_start(void)
 		
 	}
 	fprintf(stderr, "[offload_process_start]\texec thread created\n");
+	{
+		pthread_mutex_lock(&exec_func_init_mutex);
+		while (exec_ready_to_init != 3) {
+			pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
+		}
+		fprintf(stderr, "[offload_process_start]\tInit done! %d\n", exec_ready_to_init);
+		pthread_mutex_unlock(&exec_func_init_mutex);
+	}
 	/*
 	pthread_t killer_thread;
 	pthread_create(&exec_thread, NULL, cpu_killer, (void*)&exec_thread);
@@ -1449,6 +1465,7 @@ static void offload_process_fork_info(void)
 	do_fork_server_local(env_bak, flags, newsp,
                     parent_tidptr, newtls,
                     child_tidptr);
+	
 	fprintf(stderr,"[offload_process_fork_info]\tDone.\n");
 
 }

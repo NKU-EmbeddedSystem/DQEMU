@@ -91,4 +91,9 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 int offload_server_futex_wake(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_process_syscall_result(void);
 static void offload_process_tid(void);
+extern void fork_start(void);
+extern void fork_end(int);
+extern void start_exclusive(void);
+extern void end_exclusive(void);
+
 #endif

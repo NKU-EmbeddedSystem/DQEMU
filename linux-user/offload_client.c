@@ -629,7 +629,7 @@ static void dump_cpu(void)
 	CPUState *cpu = ENV_GET_CPU((CPUArchState *)client_env);
 	fprintf(stderr,"[dump_cpu]\tcpu: %p\n", cpu);
 	TaskState *ts;
-	fprintf(stderr,"[load_cpu]\topaque: %p\n", cpu->opaque);
+	fprintf(stderr,"[dump_cpu]\topaque: %p\n", cpu->opaque);
 	ts = cpu->opaque;
 	fprintf(stderr,"[dump_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
 	*((TaskState*)p) = *ts;
@@ -654,6 +654,7 @@ static void offload_send_start(int first)
 	{
 		fprintf(stderr, "%p\n", client_env->regs[i]);
 	}
+	fprintf(stderr, "first = %d\n", first);
 	if (first) {
 		dump_self_maps();
 		dump_brk();
