@@ -6444,12 +6444,18 @@ static void *clone_func(void *arg)
     CPUState *cpu;
     TaskState *ts;
 	
-    rcu_register_thread();
-    tcg_register_thread();
+	fprintf(stderr, "[clone_func]\tBorn!\n");
+
+    /* Since this is offloaded to remote, we don't need to register anymore.
+     * But actually, this would cause an unknow segfault in race condition.
+     * TODO: fix me. */
+    //rcu_register_thread();
+    //tcg_register_thread();
+	fprintf(stderr, "[clone_func]\tregisterd thread, starting...!\n");
 	
     env = info->env;
     cpu = ENV_GET_CPU(env);
-	
+	extern __thread CPUState *thread_cpu;
     thread_cpu = cpu;
 	
 	fprintf(stderr, "client #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
@@ -7215,6 +7221,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         }
         offload_log(stderr, "[do_fork]\tSET mask NULL\n");
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
+        offload_log(stderr, "[do_fork]\tDestroy attr\n");
         pthread_attr_destroy(&attr);
         
         if (ret == 0) {
@@ -7223,6 +7230,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
         } else {
+            offload_log(stderr, "[do_fork]\tErr! ret = %d\n", ret);
             ret = -1;
         }
         pthread_mutex_unlock(&info.mutex);
