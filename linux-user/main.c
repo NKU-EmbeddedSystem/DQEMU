@@ -633,6 +633,7 @@ extern void* offload_center_client_start(void*);
 pthread_mutex_t main_exec_mutex;
 pthread_cond_t main_exec_cond;
 int main_exec_flag;
+int g_false_sharing_flag;
 
 pthread_mutex_t offload_center_init_mutex; pthread_cond_t offload_center_init_cond;
 void offload_server_extra_init(void);

@@ -122,6 +122,7 @@ int syscall_started_flag;
 int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2,
 							uint32_t uaddr2, int val3, int idx, int thread_id);
 void offload_connect_online_server(int idx);
+int false_sharing_flag = 0;
 
 //int requestor_idx, target_ulong addr, int perm
 struct info
@@ -283,6 +284,7 @@ typedef struct PageMapDesc {
 	req_node list_head; 				/* to record request list */
 	int is_false_sharing;
 	uint32_t shadow_page_addr;
+	int is_shadow_page;
 } PageMapDesc;
 
 PageMapDesc page_map_table[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section"))) __attribute__ ((aligned(4096))) = {0};
@@ -1102,6 +1104,42 @@ static void offload_process_mutex_request(void)
 }
 
 /* Broadcast false sharing page. */
+uint32_t offload_client_process_false_sharing_page(uint32_t page_addr)
+{
+	PageMapDesc *pmd = get_pmd(page_addr);
+	//if (!g_false_sharing_flag) {
+	//	g_false_sharing_flag = 1;
+	//	fprintf(stderr, "[false_sharing_start]\tfalse sharing start!!\n");
+	//}
+	/* Create shadow page mapping. */
+	pmd->is_false_sharing = 1;
+	uint32_t shadow_page_addr = page_addr - 0x60000000;
+	shadow_page_addr = target_mmap(shadow_page_addr, 
+						64*PAGE_SIZE, PROT_READ|PROT_WRITE,
+						MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
+					"Created shadow pages for %p, shadow page base = %p\n", 
+					page_addr, shadow_page_addr);
+	shadow_page_addr = target_mmap(shadow_page_addr, 
+						64*PAGE_SIZE, PROT_READ|PROT_WRITE,
+						MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
+					"Created shadow pages for %p, shadow page base = %p\n", 
+					page_addr, shadow_page_addr);
+	uint32_t step = PAGE_SIZE / 64;
+	uint32_t start = shadow_page_addr, o_start = page_addr;
+	for (int i = 0; i < 64; i++) {
+		fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
+						"copying to %p - %p from %p - %p, step %p\n",
+						g2h(start), g2h(start + step),
+						g2h(o_start), g2h(o_start + step), step);
+		start += (step + PAGE_SIZE);
+		o_start += step;
+		memcpy(g2h(start), g2h(o_start), step);
+	}
+	pmd->shadow_page_addr = shadow_page_addr;
+	
+}
 
 /* fetch page */
 static void offload_process_page_request(void)
@@ -1133,18 +1171,14 @@ static void offload_process_page_request(void)
 	
 		int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
 		/* limit the prefetch count to avoid too much thread at a time */
-		prefetch_count = prefetch_count > 500 ? 500 : prefetch_count;
+		//prefetch_count = prefetch_count > 500 ? 500 : prefetch_count;
 		/* We create new shadow page mappings for the false sharing page. */
 		if (prefetch_count < 0) {
-			PageMapDesc *pmd = get_pmd(page_addr);
-			pmd->is_false_sharing = 1;
-			uint32_t shadow_page_addr = page_addr - 0x60000000;
-			shadow_page_addr = target_mmap(shadow_page_addr, 64*PAGE_SIZE, PROT_READ|PROT_WRITE,
-								MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-			fprintf(stderr, "[offload_process_page_request client#%d]\t"
-							"Created shadow pages, base = %p\n", 
-							offload_client_idx, shadow_page_addr);
-			pmd->shadow_page_addr = shadow_page_addr;
+			//fprintf(stderr, "[offload_process_page_request client#%d]\t"
+			//		"Prefetch count = %d\n", offload_client_idx, 
+			//		prefetch_count);
+			//offload_client_process_false_sharing_page(page_addr);
+			//exit(3);
 		}
 		if (prefetch_count > 0 && perm == 2) {
 			fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
@@ -2338,6 +2372,7 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 	struct pgft_record *pre = &prefetch_table[idx];		//previous node for deleting p
 	struct pgft_record *psave = NULL;
 	int ret = 0;
+	int alread_exist = 0;
     // search **all** for wait_addr and dec others' life
     while (p)
 	{
@@ -2346,12 +2381,11 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 			p->life += PREFETCH_LIFE;
 			if (++p->page_hit_count >= 10) {
 				fprintf(stderr, "[prefetch_handler]\tConflict page %p found!\n", page_addr);
-				
-				//return 0;
+				ret = -1;
 			}
 			pre = p;
 			p = p->next;
-			ret = -1;
+			alread_exist = 1;
 		}
 		else
 		// search **all** for wait_addr and dec others' life
@@ -2403,12 +2437,8 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		}
 
 	}
-	else {	
-		/* confilct page */
-		if (ret < 0) {
-			return -1;
-		}
-			// add new node
+	else if (!alread_exist) {	
+		// add new node
         fprintf(stderr, "[prefetch_handler]\tAdd new node %p!\n", page_addr);
 		p = (struct pgft_record*)malloc(sizeof(struct pgft_record));
 		memset(p, 0, sizeof(struct pgft_record));
@@ -2417,7 +2447,9 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 		p->wait_addr = page_addr + PAGE_SIZE;
 		pre->next = p;
         fprintf(stderr, "[prefetch_handler]\tAdded new node %p!\n", page_addr);
+		ret = 0;
 	}
 	show_prefetch_list(idx);
+	
 	return ret;
 }

@@ -13,6 +13,7 @@
 
 #define IDX_CLIENT 0
 extern __thread char *p;
+extern int g_false_sharing_flag;
 int client_port_of(int idx);
 
 
