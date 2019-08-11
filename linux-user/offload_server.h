@@ -95,5 +95,8 @@ extern void fork_start(void);
 extern void fork_end(int);
 extern void start_exclusive(void);
 extern void end_exclusive(void);
+static void offload_server_process_fs_page(void);
+static void offload_server_process_page_wakeup(void);
+
 
 #endif

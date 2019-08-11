@@ -1152,9 +1152,9 @@ static inline void replace_false_sharing_addr(TCGv_i32 addr)
     ////tcg_gen_and_i32(base, addr, 0xfffff000);
     //tcg_temp_free(offset);
     //tcg_temp_free(base);
-    tcg_gen_print_aa32_addr(addr);
+    //tcg_gen_print_aa32_addr(addr);
     gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
-    tcg_gen_print_aa32_addr(addr);
+    //tcg_gen_print_aa32_addr(addr);
 }
 
 static inline TCGv gen_aa32_addr(DisasContext *s, TCGv_i32 a32, TCGMemOp op)
@@ -1166,7 +1166,7 @@ static inline TCGv gen_aa32_addr(DisasContext *s, TCGv_i32 a32, TCGMemOp op)
     if (!IS_USER_ONLY && s->sctlr_b && (op & MO_SIZE) < MO_32) {
         tcg_gen_xori_tl(addr, addr, 4 - (1 << (op & MO_SIZE)));
     }
-    replace_false_sharing_addr(addr);
+    gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
     return addr;
 }
 

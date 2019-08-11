@@ -1504,24 +1504,32 @@ typedef struct PageMapDesc_server {
 	uint32_t shadow_page_addr;
 } PageMapDesc_server;
 extern inline PageMapDesc_server* get_pmd_s(uint32_t page_addr);
+extern int g_false_sharing_flag;
 
 uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
 {
     /* If there's no false sharing, simply return ASAP. */
-    if (!fs_flag) {
+    if (!g_false_sharing_flag) {
         return addr;
     }
     // TODO maybe we can have a 'page cache' here
     
-
     uint32_t page_addr = addr & 0xfffff000;
     uint32_t page_off = addr & 0xfff;
-    uint32_t newaddr;
-    for (int i = 0; i < 5; i++) {
-        if (page_addr == fs_addr[i]) {
-            newaddr = fs_new[i] + (page_off / 64) * 0x1000 + page_off;
-        }
+    uint32_t newaddr = addr;
+    PageMapDesc_server *pmd = get_pmd_s(page_addr);
+    if (pmd->is_false_sharing) {
+        newaddr = pmd->shadow_page_addr + 
+                (page_off / 64) * 0x1000 + page_off;
+//        fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
+//                        "page addr = %x --> new addr %p\n", 
+//                        addr, newaddr);
     }
-    addr = newaddr;
-    return addr;
+    else {
+    //    fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
+    //                    "%p pmd->is_falsesharing == %d\n", addr,
+    //                    pmd->is_false_sharing);
+
+    }
+    return newaddr;
 }

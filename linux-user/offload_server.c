@@ -666,6 +666,9 @@ static void offload_process_page_request(void)
 	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d, from %d, for %d\n", page_addr, perm, client_idx, forwho);
 	// when debug, erase this.
 	pmd->cur_perm = 1;
+	if (offload_server_idx == 0) {
+		pthread_mutex_lock(&master_mprotect_mutex);
+	}
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
 
 	if (page_addr == 0x78000)
@@ -695,6 +698,9 @@ static void offload_process_page_request(void)
 	{
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);
 		pmd->cur_perm = 1;
+	}
+	if (offload_server_idx == 0) {
+		pthread_mutex_unlock(&master_mprotect_mutex);
 	}
 	
 	//pthread_mutex_unlock(&socket_mutex);
@@ -765,9 +771,11 @@ void offload_page_recv_wake_up_thread(uint32_t page_addr, int perm)
 		pthread_cond_broadcast(&page_syscall_recv_cond);
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 	}
-	/* Update server's page map. */
-	PageMapDesc_server* pmd = get_pmd_s(page_addr);
-	pmd->cur_perm = perm;
+	/* Update server's page map. -1 means we don't know the perm so don't chage it.*/
+	if (perm >= 0) {
+		PageMapDesc_server* pmd = get_pmd_s(page_addr);
+		pmd->cur_perm = perm;
+	}
 	pthread_mutex_unlock(&page_process_mutex);
 }
 
@@ -1126,6 +1134,19 @@ static void offload_server_daemonize(void)
 				try_recv(size);
 				offload_process_fork_info();
 				break;
+
+			case TAG_OFFLOAD_FS_PAGE:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: FS Page, size = %d\n", size);
+				try_recv(size);
+				offload_server_process_fs_page();
+				break;
+
+			case TAG_OFFLOAD_PAGE_WAKEUP:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: Page wakeup, size = %d\n", size);
+				try_recv(size);
+				offload_server_process_page_wakeup();
+				break;
+
 			default:
 				fprintf(stderr, "[offload_server_daemonize]\tunkown tag: %d\n", tag);
 				try_recv(size);
@@ -1536,4 +1557,48 @@ static int autoSend(int Fd,char* buf, int length, int flag)
 		ptr += res;
 	}
 	return length;
+}
+
+static void offload_server_process_page_wakeup(void)
+{
+	p = net_buffer;
+	target_ulong page_addr = *((target_ulong *) p);
+    p += sizeof(target_ulong);
+	fprintf(stderr, "[offload_server_process_page_wakeup]\tpage addr : %p\n", page_addr);
+	//fprintf(stderr, "[offload_server_process_fs_page]\tpage %x perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
+	// wake up the execution thread upon this page.
+	offload_page_recv_wake_up_thread(page_addr, -1);
+}
+static void offload_server_process_fs_page(void)
+{
+	//pthread_mutex_lock(&socket_mutex);
+	pthread_mutex_lock(&page_process_mutex);
+	if(!g_false_sharing_flag) {
+		g_false_sharing_flag = 1;
+	}
+	p = net_buffer;
+	target_ulong page_addr = *((target_ulong *) p);
+    p += sizeof(target_ulong);
+	uint32_t shadow_page_addr = *((uint32_t *) p);
+	p += sizeof(uint32_t);
+	fprintf(stderr, "[offload_server_process_fs_page]\tpage addr : %p"
+					"shadow page addr : %p\n", page_addr, shadow_page_addr);
+	PageMapDesc_server *pmd = get_pmd_s(page_addr);
+
+	assert(shadow_page_addr < 0xd0000000);
+	if (offload_server_idx > 0) {
+		int ret = target_mmap(shadow_page_addr, 
+							64*PAGE_SIZE, PROT_NONE,
+							MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		assert(ret == shadow_page_addr);
+		assert(pmd->cur_perm == 0);
+		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_NONE);
+	}
+	
+	pmd->is_false_sharing = 1;
+	pmd->shadow_page_addr = shadow_page_addr;
+	//fprintf(stderr, "[offload_server_process_fs_page]\tpage %x perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
+	// wake up the execution thread upon this required page.
+	pthread_mutex_unlock(&page_process_mutex);
+	offload_page_recv_wake_up_thread(page_addr, 0);
 }

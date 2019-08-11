@@ -9,6 +9,7 @@
 #define PREFETCH_LAUNCH_VALVE 4
 #define PREFETCH_LIFE 80
 #define PREFETCH_BEGIN_PAGE_COUNT 10
+#define ONLINE_SERVER 2
 
 //#define _ATFILE_SOURCE
 #include "qemu/osdep.h"
@@ -103,8 +104,19 @@
 #include "uname.h"
 #include "qemu.h"
 #include "offload_client.h"
+#define DQEMU_PAGE_BITS
+#define DQEMU_PAGE_NONE			0x0		/* NONE. READ, WRITE **in local** */
+#define DQEMU_PAGE_READ			0x1
+#define DQEMU_PAGE_WRITE		0x2
+#define DQEMU_PAGE_PROCESS_FS	0x4		/* Generating shadow pages. */
+#define DQEMU_PAGE_FS			0x8		/* False sharing page in use. */
+#define DQEMU_PAGE_SHADOW		0x10	/* Shadow page */
+
+
+target_ulong shadow_page_base = 0xa0000000;
 static void offload_send_mutex_verified(int);
 
+static void offload_send_page_wakeup(int idx, target_ulong page_addr);
 static void offload_process_mutex_done(void);
 static void offload_send_syscall_result(int,abi_long,int);
 static void offload_process_syscall_request(void);
@@ -123,6 +135,7 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 							uint32_t uaddr2, int val3, int idx, int thread_id);
 void offload_connect_online_server(int idx);
 int false_sharing_flag = 0;
+__thread char buf[TARGET_PAGE_SIZE * 2];
 
 //int requestor_idx, target_ulong addr, int perm
 struct info
@@ -282,9 +295,8 @@ typedef struct PageMapDesc {
 	int invalid_count;					/* How many we should tell to invalidate */
 	int cur_perm;
 	req_node list_head; 				/* to record request list */
-	int is_false_sharing;
+	uint32_t flag;
 	uint32_t shadow_page_addr;
-	int is_shadow_page;
 } PageMapDesc;
 
 PageMapDesc page_map_table[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section"))) __attribute__ ((aligned(4096))) = {0};
@@ -321,7 +333,7 @@ static void offload_client_send_futex_wake_result(int result);
 
 int offload_client_start(CPUArchState *the_env);
 void* offload_center_client_start(void*);
-static void offload_send_page_request(int idx, target_ulong guest_addr, uint32_t perm,int );
+static void offload_send_page_request(int idx, target_ulong guest_addr, uint32_t perm,int);
 static void offload_send_page_content(int idx, target_ulong guest_addr, uint32_t perm, char *content);
 
 static void offload_client_send_cmpxchg_ack(target_ulong);
@@ -869,6 +881,26 @@ static inline void show_pmd_list(req_node *p)
 		p = p->next;
 	}
 }
+static void wake_pmd_list(uint32_t page_addr)
+{
+	fprintf(stderr, "[process_pmd]\twake pmd list! %p\n", page_addr);
+	PageMapDesc *pmd = get_pmd(page_addr);
+	/* Make sure its a fs page and is processes already. */
+
+	fprintf(stderr, "[process_pmd]\tbits %p, c1 %d, c2 %d\n", pmd->flag, 
+				(pmd->flag & DQEMU_PAGE_FS),!(pmd->flag & DQEMU_PAGE_PROCESS_FS));
+	int is_fs_page = (pmd->flag & DQEMU_PAGE_FS) && !(pmd->flag & DQEMU_PAGE_PROCESS_FS);
+	assert(is_fs_page == 1);
+	req_node *p = pmd->list_head.next, *tmp;
+	show_pmd_list(p);
+	while (p) {
+		offload_send_page_wakeup(p->idx, page_addr);
+		tmp = p;
+		p = p->next;
+		free(tmp);
+	}
+	pmd->list_head.next = NULL;
+}
 static int process_pmd(uint32_t page_addr)
 {
 	PageMapDesc *pmd = get_pmd(page_addr);
@@ -1103,42 +1135,84 @@ static void offload_process_mutex_request(void)
 	pthread_mutex_unlock(&g_cas_mutex);
 }
 
-/* Broadcast false sharing page. */
-uint32_t offload_client_process_false_sharing_page(uint32_t page_addr)
+
+static inline void dqemu_set_page_bit(uint32_t page_addr, uint32_t page_bit)
 {
 	PageMapDesc *pmd = get_pmd(page_addr);
-	//if (!g_false_sharing_flag) {
-	//	g_false_sharing_flag = 1;
-	//	fprintf(stderr, "[false_sharing_start]\tfalse sharing start!!\n");
-	//}
+	pmd->flag = page_bit;
+	fprintf(stderr, "[dqemu_set_page_bit]\tnow %p page bit = %p\n", page_addr, page_bit);
+}
+
+static void offload_broadcast_fs_page(uint32_t page_addr, uint32_t shadow_page_addr)
+{
+	char *pp = buf + sizeof(struct tcp_msg_header);
+	*((target_ulong *) pp) = page_addr;
+	pp += sizeof(target_ulong);
+	*((uint32_t*)pp) = shadow_page_addr;
+	pp += sizeof(uint32_t);
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
+	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_FS_PAGE);
+	/* Broadcast message. */
+	for (int i = 0; i <= ONLINE_SERVER; i++) {
+		autoSend(i, buf, pp - buf, 0);
+		fprintf(stderr, "[offload_broadcast_fs_page]\tsent fs page %p"
+				"shadow page %p to #%d\n", page_addr, shadow_page_addr, i);
+	}
+}
+/* Process and broadcast false sharing page. */
+/* Clean up the left */
+uint32_t offload_client_process_false_sharing_page(uint32_t page_addr)
+{
+	fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
+					"page addr = %p\n",
+					page_addr);
+	PageMapDesc *pmd = get_pmd(page_addr);
 	/* Create shadow page mapping. */
-	pmd->is_false_sharing = 1;
-	uint32_t shadow_page_addr = page_addr - 0x60000000;
-	shadow_page_addr = target_mmap(shadow_page_addr, 
+	uint32_t shadow_page_addr = shadow_page_base;
+	shadow_page_base += 64 * PAGE_SIZE;
+	assert(shadow_page_base < 0xd0000000);
+	uint32_t ret = target_mmap(shadow_page_addr, 
 						64*PAGE_SIZE, PROT_READ|PROT_WRITE,
 						MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	assert(ret == shadow_page_addr);
+	//shadow_page_addr = mmap(g2h(shadow_page_addr), 
+	//					64*PAGE_SIZE, PROT_READ|PROT_WRITE,
+	//					MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 	fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
-					"Created shadow pages for %p, shadow page base = %p\n", 
+					"Created shadow pages for %p, shadow page base = %p, setting to zeros\n", 
 					page_addr, shadow_page_addr);
-	shadow_page_addr = target_mmap(shadow_page_addr, 
-						64*PAGE_SIZE, PROT_READ|PROT_WRITE,
-						MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-	fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
-					"Created shadow pages for %p, shadow page base = %p\n", 
-					page_addr, shadow_page_addr);
+	memset(g2h(shadow_page_addr), 0, 64*PAGE_SIZE);
 	uint32_t step = PAGE_SIZE / 64;
 	uint32_t start = shadow_page_addr, o_start = page_addr;
 	for (int i = 0; i < 64; i++) {
 		fprintf(stderr, "[offload_client_process_false_sharing_page]\t"
-						"copying to %p - %p from %p - %p, step %p\n",
-						g2h(start), g2h(start + step),
-						g2h(o_start), g2h(o_start + step), step);
+						"%d: copying to %p - %p from %p - %p, step %p\n", i,
+						start, start + step,
+						o_start, o_start + step, step);
+
+		memcpy(g2h(start), g2h(o_start), step);
+		dqemu_set_page_bit(start & 0xfffff000, DQEMU_PAGE_NONE| DQEMU_PAGE_SHADOW);
 		start += (step + PAGE_SIZE);
 		o_start += step;
-		memcpy(g2h(start), g2h(o_start), step);
+		// TODO check SHADOW and FS bit when receive request
+		// TODO don't split shadow page
 	}
+	fprintf(stderr, "[offload_client_process_false_sharing_page]\tCopy done.\n");
+
 	pmd->shadow_page_addr = shadow_page_addr;
-	
+	dqemu_set_page_bit(page_addr, DQEMU_PAGE_NONE| DQEMU_PAGE_FS);
+	fprintf(stderr, "[offload_client_process_false_sharing_page]\tNow page %p bit %p.\n",
+					page_addr, pmd->flag);
+
+	offload_broadcast_fs_page(page_addr, shadow_page_addr);
+
+	// TODO wake up pmd list to let them rethink.
+	/* Mark as master got the page. */
+	clear(&pmd->owner_set);
+	insert(&pmd->owner_set, 0);
+	fprintf(stderr, "[offload_client_process_false_sharing_page]\tclean set and unlock.\n");
+	pthread_mutex_unlock(&pmd->owner_set_mutex);
+	wake_pmd_list(page_addr);
 }
 
 /* fetch page */
@@ -1151,16 +1225,18 @@ static void offload_process_page_request(void)
 	int perm = *(uint32_t *) p;
 	p += sizeof(uint32_t);
 
+	PageMapDesc *pmd = get_pmd(page_addr);
 	/*uint32_t got_flag = *(uint32_t *)p;
 	p += sizeof(uint32_t);*/
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
 	fprintf(log, "%d\t%p\t%d\n", offload_client_idx, page_addr, perm);
 	/* Check if already in prefetch list */
 	int isInPrefetch = (perm == 2)? 0 : prefetch_check(page_addr, offload_client_idx);
-	// if (isInPrefetch<0)
-	// {
-	// 	sleep(0.5);
-	// }
+	/* Hit already splited false sharing page. */
+	fprintf(stderr, "[offload_process_page_request client#%d]\tpage flag %p\n", pmd->flag);
+	if (pmd->flag & DQEMU_PAGE_FS) {
+		offload_send_page_wakeup(offload_client_idx, page_addr);
+	}
 	offload_client_fetch_page(offload_client_idx, page_addr, perm);
 	if (isInPrefetch < 0)
 	{
@@ -1168,19 +1244,25 @@ static void offload_process_page_request(void)
 		return;
 	}
 	else {
-	
 		int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
-		/* limit the prefetch count to avoid too much thread at a time */
-		//prefetch_count = prefetch_count > 500 ? 500 : prefetch_count;
-		/* We create new shadow page mappings for the false sharing page. */
+		/* False sharing page. */
 		if (prefetch_count < 0) {
-			//fprintf(stderr, "[offload_process_page_request client#%d]\t"
-			//		"Prefetch count = %d\n", offload_client_idx, 
-			//		prefetch_count);
-			//offload_client_process_false_sharing_page(page_addr);
+			fprintf(stderr, "[offload_process_page_request client#%d]\t"
+					"Prefetch count = %d, false sharing page!\n", offload_client_idx, 
+					prefetch_count);
+			/* Mark the page in false sharing process. */
+			if (pmd->flag & DQEMU_PAGE_SHADOW) {
+				fprintf(stderr, "[offload_process_page_request client#%d]\t"
+						"already is shadow page! wo to le! %p\n", offload_client_idx, 
+						page_addr);
+				//exit(2);
+			}
+			if (!(pmd->flag & DQEMU_PAGE_FS) && !(pmd->flag & DQEMU_PAGE_PROCESS_FS) 
+				&& !(pmd->flag & DQEMU_PAGE_SHADOW))
+				dqemu_set_page_bit(page_addr, DQEMU_PAGE_PROCESS_FS);
 			//exit(3);
 		}
-		if (prefetch_count > 0 && perm == 2) {
+		else if (prefetch_count > 0 && perm != 2) {
 			fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
 			for (int i = 0; i < prefetch_count; i++) {
 				offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, 1);
@@ -1908,18 +1990,21 @@ void offload_syscall_daemonize_start(CPUArchState *the_env)
 }
 
 
+/* Send page request. 
+ * guest page address 	: 4
+ * permission			: 4
+ * who sent this		: 4
+ * page for who			: 4
+ * is false sharing		: 4
+ */
 static void offload_send_page_request(int idx, target_ulong page_addr, uint32_t perm, int forwho)
 {
-
-	//pthread_mutex_lock(&socket_mutex);
 	p = BUFFER_PAYLOAD_P;
 
 	*((target_ulong *) p) = page_addr;
 	p += sizeof(target_ulong);
-
 	*((uint32_t *) p) = perm;
 	p += sizeof(uint32_t);
-
 	*((int*) p) = offload_client_idx;
 	p += sizeof(int);
 	*((int*) p) = forwho;
@@ -1942,12 +2027,35 @@ static void offload_send_page_request(int idx, target_ulong page_addr, uint32_t 
 	fprintf(stderr, "[offload_send_page_request]\tsent page %x request to node# %d, perm: %d, packet#%d\n", page_addr, idx, perm, get_number());
 	//pthread_mutex_unlock(&socket_mutex);
 }
-__thread char buf[TARGET_PAGE_SIZE * 2];
 
+static void offload_send_page_wakeup(int idx, target_ulong page_addr)
+{
+	char *pp = buf + sizeof(struct tcp_msg_header);
+	*((target_ulong *) pp) = page_addr;
+	pp += sizeof(target_ulong);
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
+	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_WAKEUP);
+	autoSend(idx, buf, pp - buf, 0);
+	fprintf(stderr, "[offload_send_page_wakeup]\tsent page wakeup %x to #%d, packet#%d\n", page_addr, idx, get_number());
+}
 static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t perm, char *content)
 {
-	//pthread_mutex_lock(&socket_mutex);
-	//char buf[TARGET_PAGE_SIZE * 2];
+	PageMapDesc *pmd = get_pmd(page_addr);
+	/* If this is a fs page need to be processed and no one but us has the page now. */
+	fprintf(stderr, "[offload_send_page_content]\t%p page bit = %p perm = %d, c1 %d c2 %d\n", 
+						page_addr, pmd->flag, perm, pmd->flag & DQEMU_PAGE_PROCESS_FS,
+						perm==2);
+	if ((pmd->flag & DQEMU_PAGE_PROCESS_FS) && (perm == 2)) {
+		pthread_mutex_lock(&master_mprotect_mutex);
+		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
+		fprintf(stderr, "[offload_send_page_content]\tcopying to %p\n", page_addr);
+		memcpy(g2h(page_addr), content, TARGET_PAGE_SIZE);
+		offload_client_process_false_sharing_page(page_addr);
+		pthread_mutex_unlock(&master_mprotect_mutex);
+		offload_send_page_wakeup(idx, page_addr);
+
+		return;
+	}
 	char *pp = buf + sizeof(struct tcp_msg_header);
 	//fprintf(stderr, "[offload_send_page_content]\tp: %p, net_buffer: %p\n", p, net_buffer);
 	*((target_ulong *) pp) = page_addr;
@@ -1965,7 +2073,6 @@ static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t 
 	autoSend(idx, buf, pp - buf, 0);
 
 	fprintf(stderr, "[offload_send_page_content]\tsent page content %x to #%d, perm %d, packet#%d\n", page_addr, idx, perm, get_number());
-	//pthread_mutex_unlock(&socket_mutex);
 }
 
 // get the imformation of mutex-done sender and remove it from MutexList

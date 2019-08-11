@@ -634,6 +634,7 @@ pthread_mutex_t main_exec_mutex;
 pthread_cond_t main_exec_cond;
 int main_exec_flag;
 int g_false_sharing_flag;
+pthread_mutex_t master_mprotect_mutex;
 
 pthread_mutex_t offload_center_init_mutex; pthread_cond_t offload_center_init_cond;
 void offload_server_extra_init(void);
@@ -1169,6 +1170,7 @@ int main(int argc, char **argv, char **envp)
 
 
         pthread_mutex_init(&offload_center_init_mutex, NULL);
+        pthread_mutex_init(&master_mprotect_mutex, NULL);
         pthread_cond_init(&offload_center_init_cond, NULL);
         
         pthread_create(&center_server_thread, NULL, offload_center_server_start, (void *) NULL);
@@ -1180,6 +1182,8 @@ int main(int argc, char **argv, char **envp)
         for (int i = 1; i < 3; i++) {
             extern void offload_connect_online_server(int idx);
             offload_connect_online_server(i);
+        
+        fprintf(stderr, "Target long size = %d\n", sizeof(target_ulong));
         }
     }
     if (offload_mode == 1)
