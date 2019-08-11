@@ -13,6 +13,7 @@
 
 #define IDX_CLIENT 0
 extern __thread char *p;
+extern int g_false_sharing_flag;
 int client_port_of(int idx);
 
 
@@ -70,13 +71,16 @@ enum
 	TAG_OFFLOAD_SYSCALL_REQ,
 	TAG_OFFLOAD_SYSCALL_RES,
 	TAG_OFFLOAD_YOUR_TID,
-	TAG_OFFLOAD_FORK_INFO
+	TAG_OFFLOAD_FORK_INFO,
+	TAG_OFFLOAD_PAGE_WAKEUP,
+	TAG_OFFLOAD_FS_PAGE
 
 };
 
 
 extern void offload_log(FILE*, const char*, ...);
 
+extern pthread_mutex_t master_mprotect_mutex;
 extern __thread int offload_mode;
 
 static uint32_t get_tag(void);

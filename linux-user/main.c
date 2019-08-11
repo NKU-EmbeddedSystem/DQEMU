@@ -50,6 +50,10 @@ static const char *cpu_type;
 unsigned long mmap_min_addr;
 unsigned long guest_base;
 int have_guest_base;
+typedef struct gst_thrd_info_t{
+    int server_idx;
+    int thread_idx;
+} gst_thrd_info_t;
 
 extern __thread int offload_mode; /* 1: server, 2: client  3: exec*/
 extern void exec_func(void);
@@ -629,6 +633,8 @@ extern void* offload_center_client_start(void*);
 pthread_mutex_t main_exec_mutex;
 pthread_cond_t main_exec_cond;
 int main_exec_flag;
+int g_false_sharing_flag;
+pthread_mutex_t master_mprotect_mutex;
 
 pthread_mutex_t offload_center_init_mutex; pthread_cond_t offload_center_init_cond;
 void offload_server_extra_init(void);
@@ -865,7 +871,11 @@ void offload_server_extra_init(void)
 
     return;
 }
-int thread_pos[32] = {0,0,1,1,2,2,0};
+/* To manipulate guest thread's server. 
+ * Short for guest thread place*/
+int gst_thrd_plc[32] = {1,0,0,0,1,1,1,1,2,2,2,2,0,0,0,0};
+gst_thrd_info_t gst_thrd_info[32];
+
 pthread_t center_server_thread;
 extern void offload_client_pmd_init(void);
 int main(int argc, char **argv, char **envp)
@@ -897,9 +907,18 @@ int main(int argc, char **argv, char **envp)
 	}
 	else if (offload_mode == 2)
 	{
-		fprintf(stderr, ">>>>>>>>>>>> [Master]. Thread positioning:\n");
+        /* Process guest thread info, format: [server idx -> thread idx]. */
+		fprintf(stderr, ">>>>>>>>>>>> [Master]. Guest thread placement:\n");
+        /* Note that 0->0 is the main thread. */
+        int server_thread_count[32] = {1, 0};
+        int server_idx = 0;
         for (int i = 0; i < 32; i++) {
-            fprintf(stderr, "Thread %d --> Node %d\n",  i, thread_pos[i]);
+            server_idx = gst_thrd_plc[i];
+            gst_thrd_info[i].server_idx = server_idx;
+            gst_thrd_info[i].thread_idx = server_thread_count[server_idx]++;
+            fprintf(stderr, "Thread %d --> [%d->%d]\n", 
+                        i, gst_thrd_info[i].server_idx, 
+                        gst_thrd_info[i].thread_idx);
         }        
 	}
 	else
@@ -1151,6 +1170,7 @@ int main(int argc, char **argv, char **envp)
 
 
         pthread_mutex_init(&offload_center_init_mutex, NULL);
+        pthread_mutex_init(&master_mprotect_mutex, NULL);
         pthread_cond_init(&offload_center_init_cond, NULL);
         
         pthread_create(&center_server_thread, NULL, offload_center_server_start, (void *) NULL);
@@ -1158,6 +1178,13 @@ int main(int argc, char **argv, char **envp)
         pthread_mutex_lock(&offload_center_init_mutex);
         pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
         pthread_mutex_unlock(&offload_center_init_mutex);
+        fprintf(stderr, "Connecting online server\n");
+        for (int i = 1; i < 3; i++) {
+            extern void offload_connect_online_server(int idx);
+            offload_connect_online_server(i);
+        
+        fprintf(stderr, "Target long size = %d\n", sizeof(target_ulong));
+        }
     }
     if (offload_mode == 1)
 	{
@@ -1169,6 +1196,13 @@ int main(int argc, char **argv, char **envp)
         /* Create daemonize thread and wait to be ready. */
         pthread_mutex_init(&main_exec_mutex, NULL);
         pthread_cond_init(&main_exec_cond, NULL);
+        /* If this is our first additional thread, we need to ensure we
+         * generate code for parallel execution and flush old translations.
+         */
+        if (!parallel_cpus) {
+            parallel_cpus = true;
+            tb_flush(cpu);
+        }
         main_exec_flag = 0;
         pthread_t server_t;
         extern void *offload_server_start_thread(void*);
@@ -1178,13 +1212,8 @@ int main(int argc, char **argv, char **envp)
             pthread_cond_wait(&main_exec_cond, &main_exec_mutex);
         }
         pthread_mutex_unlock(&main_exec_mutex);
-        /* If this is our first additional thread, we need to ensure we
-         * generate code for parallel execution and flush old translations.
-         */
-        if (!parallel_cpus) {
-            parallel_cpus = true;
-            tb_flush(cpu);
-        }
+        /* Never reaches here. */
+        exit(56);
 		exec_func();
 	}
 	offload_mode = 3;

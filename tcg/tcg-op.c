@@ -2827,6 +2827,10 @@ void tcg_gen_ldex(TCGv addr)
 {
     //gen_helper_offload_load_exclusive((uint32_t)addr);
 }
+void tcg_gen_print_aa32_addr(TCGv_i32 addr)
+{
+    gen_helper_print_aa32_addr(addr);
+}
 
 void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
                                 TCGv_i32 newv, TCGArg idx, TCGMemOp memop)

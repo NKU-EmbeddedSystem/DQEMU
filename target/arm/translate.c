@@ -65,8 +65,9 @@ static TCGv_i32 cpu_R[16];
 TCGv_i32 cpu_CF, cpu_NF, cpu_VF, cpu_ZF;
 TCGv_i64 cpu_exclusive_addr;
 TCGv_i64 cpu_exclusive_val;
-TCGv_i64 false_sharing_addr[5];
-TCGv_i64 shadow_page_addr[5];
+//TCGv_i32 false_sharing_flag;
+//TCGv_i32 false_sharing_addr[5];
+//TCGv_i32 shadow_page_addr[5];
 static const char *false_sharing_names[] =
     { "false_sharing_addr1", "false_sharing_addr2",
       "false_sharing_addr3", "false_sharing_addr4",
@@ -110,12 +111,14 @@ void arm_translate_init(void)
     cpu_exclusive_val = tcg_global_mem_new_i64(cpu_env,
         offsetof(CPUARMState, exclusive_val), "exclusive_val");
 
-    for (i = 0; i < 5; i++) {
-        false_sharing_addr[i] = tcg_global_mem_new_i64(cpu_env,
-        offsetof(CPUARMState, false_sharing_addr[i]), false_sharing_names[i]);
-        shadow_page_addr[i] = tcg_global_mem_new_i64(cpu_env,
-        offsetof(CPUARMState, shadow_page_addr[i]), shadow_page_names[i]);
-    }
+    //false_sharing_flag = tcg_global_mem_new_i32(cpu_env,
+    //    offsetof(CPUARMState, false_sharing_flag), "false_sharing_flag");
+    //for (i = 0; i < 5; i++) {
+    //    false_sharing_addr[i] = tcg_global_mem_new_i32(cpu_env,
+    //    offsetof(CPUARMState, false_sharing_addr[i]), false_sharing_names[i]);
+    //    shadow_page_addr[i] = tcg_global_mem_new_i32(cpu_env,
+    //    offsetof(CPUARMState, shadow_page_addr[i]), shadow_page_names[i]);
+    //}
     a64_translate_init();
 }
 
@@ -1101,6 +1104,59 @@ static inline void store_reg_from_load(DisasContext *s, int reg, TCGv_i32 var)
  * that the address argument is TCGv_i32 rather than TCGv.
  */
 
+/* DQEMU's instrument. 
+ * If page address hit false sharing address, replace it with 
+ * shadow page's address.
+ * Supposing the page is splited into x parts, the base shadow
+ * page addres is base. 
+ * NewAddr = base + (page_offset / x) * PAGESIZE
+ * Note that we cannot set branch here or the temp vars die. */
+
+static inline void replace_false_sharing_addr(TCGv_i32 addr)
+{
+    /*
+    TCGv_i32 page_mask, page_offset_mask;
+    page_mask = tcg_const_i32(0xfffff000);
+    page_offset_mask = tcg_const_i32(0xfff);
+    */
+    //TCGv_i32 offset, base, con;
+    //offset = tcg_temp_new();
+    //base = tcg_temp_new();
+    ///* Calc the offset. */
+    //con = tcg_const_i32(0xfff);
+    //tcg_gen_and_i32(offset, addr, con);
+    //tcg_temp_free(con);
+    //con = tcg_const_i32(64);
+    //tcg_gen_div_i32(offset, offset, con);
+    //tcg_temp_free(con);
+    //con = tcg_const_i32(0x1000);
+    //tcg_gen_mul_i32(offset, offset, con);
+    //tcg_temp_free(con);
+    ///* Get new base. */
+    //con = tcg_const_i32(0xfffff000);
+    //tcg_gen_and_i32(base, addr, con);
+    //tcg_temp_free(con);
+    //tcg_gen_movcond_i32(TCG_COND_EQ, base, base, false_sharing_addr[0],
+    //                    shadow_page_addr[0], base);
+    //tcg_gen_movcond_i32(TCG_COND_EQ, base, base, false_sharing_addr[1],
+    //                    shadow_page_addr[1], base);
+    //tcg_gen_movcond_i32(TCG_COND_EQ, base, base, false_sharing_addr[2],
+    //                    shadow_page_addr[2], base);
+    //tcg_gen_movcond_i32(TCG_COND_EQ, base, base, false_sharing_addr[3],
+    //                    shadow_page_addr[3], base);
+    //tcg_gen_movcond_i32(TCG_COND_EQ, base, base, false_sharing_addr[4],
+    //                    shadow_page_addr[4], base);
+    //tcg_gen_add_i32(base, base, offset);
+    
+    
+    ////tcg_gen_and_i32(base, addr, 0xfffff000);
+    //tcg_temp_free(offset);
+    //tcg_temp_free(base);
+    //tcg_gen_print_aa32_addr(addr);
+    gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
+    //tcg_gen_print_aa32_addr(addr);
+}
+
 static inline TCGv gen_aa32_addr(DisasContext *s, TCGv_i32 a32, TCGMemOp op)
 {
     TCGv addr = tcg_temp_new();
@@ -1110,6 +1166,7 @@ static inline TCGv gen_aa32_addr(DisasContext *s, TCGv_i32 a32, TCGMemOp op)
     if (!IS_USER_ONLY && s->sctlr_b && (op & MO_SIZE) < MO_32) {
         tcg_gen_xori_tl(addr, addr, 4 - (1 << (op & MO_SIZE)));
     }
+    gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
     return addr;
 }
 
@@ -1124,6 +1181,7 @@ static void gen_aa32_ld_i32(DisasContext *s, TCGv_i32 val, TCGv_i32 a32,
     }
 
     addr = gen_aa32_addr(s, a32, opc);
+    //tcg_gen_print_aa32_addr(addr);
     tcg_gen_qemu_ld_i32(val, addr, index, opc);
     tcg_temp_free(addr);
 }
@@ -1139,6 +1197,7 @@ static void gen_aa32_st_i32(DisasContext *s, TCGv_i32 val, TCGv_i32 a32,
     }
 
     addr = gen_aa32_addr(s, a32, opc);
+    //tcg_gen_print_aa32_addr(addr);
     tcg_gen_qemu_st_i32(val, addr, index, opc);
     tcg_temp_free(addr);
 }

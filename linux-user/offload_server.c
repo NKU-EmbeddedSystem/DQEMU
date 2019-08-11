@@ -145,7 +145,7 @@ static void load_cpu(void)
 	p += sizeof(CPUARMState);
 	
 
-	fprintf(stderr,"[load_cpu]\tenv: %p\n", thread_env);
+	fprintf(stderr,"[load_cpu]\tthread_env: %p\n", thread_env);
 	CPUState *cpu = ENV_GET_CPU(thread_env);
 	// extern CPUArchState *thread_cpu;
 	extern __thread CPUState *thread_cpu;
@@ -163,6 +163,7 @@ static void load_cpu(void)
 	p += sizeof(TaskState);
 	cpu->opaque = ts;
 	fprintf(stderr,"[load_cpu]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+	assert(ts->child_tidptr);
 	/*vfp_set_fpscr(env, *((uint32_t*) p));
 	fprintf(stderr, "fpscr: %d\n", *((uint32_t*) p));
 	p += sizeof(uint32_t);
@@ -238,17 +239,15 @@ static void load_memory_region(void)
 		}
 		if (mapped_flag)
 			continue;
-		if (first)
-		{
-			/* Now we map the region. */
-			fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
-			mapped[mapped_count++] = addr;
+		/* Now we map the region. */
+		fprintf(stderr, "[load_memory_region]\tmemory region: %x to %x,  host: %x to %x\n", addr, addr + len, g2h(addr), g2h(addr) + len);
+		mapped[mapped_count++] = addr;
 
-			int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
-								MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-			fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
-			//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
-		}
+		int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
+							MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
+		assert(ret == addr);
+		//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
     }
 	first = 0;
 }
@@ -271,8 +270,10 @@ static void load_brk(void)
 				target_mmap_return = target_mmap(old_brk, (unsigned int)current_brk - old_brk,
 												PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 				mprotect(g2h(old_brk), (unsigned int)current_brk - old_brk, PROT_NONE);
-				if (target_mmap_return != old_brk)
+				if (target_mmap_return != old_brk) {
 					fprintf(stderr, "[load_brk]\ttarget_mmap  failed at start of ProcessOffloadStart, returns %x\n", target_mmap_return);
+					exit(2);
+				}
 			}
 			else
 			{
@@ -280,6 +281,7 @@ static void load_brk(void)
 				if (ret) 
 				{
 					fprintf(stderr, "[load_brk]\tThe munmap failed at the start of ProcessOffloadStart : %d \n", ret);
+					exit(2);
 				}
 			}
 		}
@@ -426,11 +428,10 @@ void exec_func_init(void)
 	*  Extra exec thread ID starts at 1.
 	*  The initial exec is 0.
 	*/
-	offload_mode = 6;
+	offload_mode = 3;
 	extern __thread int offload_thread_idx;
-	static int ncount = 1;
+	static int ncount = 0;
 	offload_thread_idx = ncount;
-	ncount++;
 	fprintf(stderr, "[exec_func_init]\tWaiting for informations...\n");
 	/* Once the thread reaches here, set the exec_read_to_init to 1.
 	 * wait the flag to be 2 indicating initialization info is ready. */
@@ -439,6 +440,7 @@ void exec_func_init(void)
 	pthread_cond_broadcast(&exec_func_init_cond);
 	while (exec_ready_to_init != 2) {
 		fprintf(stderr, "[exec_func_init]\tWaiting for informations...NOT READY%d\n", exec_ready_to_init);
+
 		pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
 	}
 	pthread_mutex_unlock(&exec_func_init_mutex);
@@ -453,9 +455,11 @@ void exec_func_init(void)
 	load_cpu();
 	//sleep(100000);
 	// copy the start function address
-	// load_memory_region();
-	// load_brk();
-	// load_binary();
+	if (ncount == 0) {
+		load_memory_region();
+		load_brk();
+		load_binary();
+	}
 	// it's go time!
 	//fprintf(stderr, "this address: %x\n", g2h(0x10324));
 	fprintf(stderr, "[exec_func_init]\tready to CPU_LOOP\n");
@@ -474,6 +478,12 @@ void exec_func_init(void)
 
 	rcu_register_thread();
 	tcg_register_thread();
+	ncount++;
+
+	pthread_mutex_lock(&exec_func_init_mutex);
+	exec_ready_to_init = 3;
+	pthread_cond_broadcast(&exec_func_init_cond);
+	pthread_mutex_unlock(&exec_func_init_mutex);
 
 	//pthread_mutex_unlock(&socket_mutex);
 	cpu_loop(thread_env);
@@ -519,7 +529,7 @@ static void offload_process_start(void)
 	static int count = 0;
 	pthread_t exec_thread;
 	fprintf(stderr, "[offload_process_start]\tcreate exec thread\n");
-	if (count == 0) {
+	if (count == 0 && 0) {
 		// pthread_create(&exec_thread, NULL, exec_func, NULL);
 		pthread_mutex_lock(&main_exec_mutex);
 		main_exec_flag = 1;
@@ -540,6 +550,14 @@ static void offload_process_start(void)
 		
 	}
 	fprintf(stderr, "[offload_process_start]\texec thread created\n");
+	{
+		pthread_mutex_lock(&exec_func_init_mutex);
+		while (exec_ready_to_init != 3) {
+			pthread_cond_wait(&exec_func_init_cond, &exec_func_init_mutex);
+		}
+		fprintf(stderr, "[offload_process_start]\tInit done! %d\n", exec_ready_to_init);
+		pthread_mutex_unlock(&exec_func_init_mutex);
+	}
 	/*
 	pthread_t killer_thread;
 	pthread_create(&exec_thread, NULL, cpu_killer, (void*)&exec_thread);
@@ -648,6 +666,9 @@ static void offload_process_page_request(void)
 	fprintf(stderr, "[offload_process_page_request]\tpage %x, perm %d, from %d, for %d\n", page_addr, perm, client_idx, forwho);
 	// when debug, erase this.
 	pmd->cur_perm = 1;
+	if (offload_server_idx == 0) {
+		pthread_mutex_lock(&master_mprotect_mutex);
+	}
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
 
 	if (page_addr == 0x78000)
@@ -677,6 +698,9 @@ static void offload_process_page_request(void)
 	{
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);
 		pmd->cur_perm = 1;
+	}
+	if (offload_server_idx == 0) {
+		pthread_mutex_unlock(&master_mprotect_mutex);
 	}
 	
 	//pthread_mutex_unlock(&socket_mutex);
@@ -747,9 +771,11 @@ void offload_page_recv_wake_up_thread(uint32_t page_addr, int perm)
 		pthread_cond_broadcast(&page_syscall_recv_cond);
 		pthread_mutex_unlock(&page_syscall_recv_mutex);
 	}
-	/* Update server's page map. */
-	PageMapDesc_server* pmd = get_pmd_s(page_addr);
-	pmd->cur_perm = perm;
+	/* Update server's page map. -1 means we don't know the perm so don't chage it.*/
+	if (perm >= 0) {
+		PageMapDesc_server* pmd = get_pmd_s(page_addr);
+		pmd->cur_perm = perm;
+	}
 	pthread_mutex_unlock(&page_process_mutex);
 }
 
@@ -1108,6 +1134,19 @@ static void offload_server_daemonize(void)
 				try_recv(size);
 				offload_process_fork_info();
 				break;
+
+			case TAG_OFFLOAD_FS_PAGE:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: FS Page, size = %d\n", size);
+				try_recv(size);
+				offload_server_process_fs_page();
+				break;
+
+			case TAG_OFFLOAD_PAGE_WAKEUP:
+				fprintf(stderr, "[offload_server_daemonize]\ttag: Page wakeup, size = %d\n", size);
+				try_recv(size);
+				offload_server_process_page_wakeup();
+				break;
+
 			default:
 				fprintf(stderr, "[offload_server_daemonize]\tunkown tag: %d\n", tag);
 				try_recv(size);
@@ -1444,9 +1483,10 @@ static void offload_process_fork_info(void)
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr);
 	extern CPUArchState *env_bak;
-	do_fork_server_local( env_bak,   flags,  newsp,
-                    parent_tidptr,  newtls,
+	do_fork_server_local(env_bak, flags, newsp,
+                    parent_tidptr, newtls,
                     child_tidptr);
+	
 	fprintf(stderr,"[offload_process_fork_info]\tDone.\n");
 
 }
@@ -1517,4 +1557,48 @@ static int autoSend(int Fd,char* buf, int length, int flag)
 		ptr += res;
 	}
 	return length;
+}
+
+static void offload_server_process_page_wakeup(void)
+{
+	p = net_buffer;
+	target_ulong page_addr = *((target_ulong *) p);
+    p += sizeof(target_ulong);
+	fprintf(stderr, "[offload_server_process_page_wakeup]\tpage addr : %p\n", page_addr);
+	//fprintf(stderr, "[offload_server_process_fs_page]\tpage %x perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
+	// wake up the execution thread upon this page.
+	offload_page_recv_wake_up_thread(page_addr, -1);
+}
+static void offload_server_process_fs_page(void)
+{
+	//pthread_mutex_lock(&socket_mutex);
+	pthread_mutex_lock(&page_process_mutex);
+	if(!g_false_sharing_flag) {
+		g_false_sharing_flag = 1;
+	}
+	p = net_buffer;
+	target_ulong page_addr = *((target_ulong *) p);
+    p += sizeof(target_ulong);
+	uint32_t shadow_page_addr = *((uint32_t *) p);
+	p += sizeof(uint32_t);
+	fprintf(stderr, "[offload_server_process_fs_page]\tpage addr : %p"
+					"shadow page addr : %p\n", page_addr, shadow_page_addr);
+	PageMapDesc_server *pmd = get_pmd_s(page_addr);
+
+	assert(shadow_page_addr < 0xd0000000);
+	if (offload_server_idx > 0) {
+		int ret = target_mmap(shadow_page_addr, 
+							64*PAGE_SIZE, PROT_NONE,
+							MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		assert(ret == shadow_page_addr);
+		assert(pmd->cur_perm == 0);
+		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_NONE);
+	}
+	
+	pmd->is_false_sharing = 1;
+	pmd->shadow_page_addr = shadow_page_addr;
+	//fprintf(stderr, "[offload_server_process_fs_page]\tpage %x perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
+	// wake up the execution thread upon this required page.
+	pthread_mutex_unlock(&page_process_mutex);
+	offload_page_recv_wake_up_thread(page_addr, 0);
 }

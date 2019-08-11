@@ -587,9 +587,10 @@ typedef struct CPUARMState {
     uint64_t exclusive_high;
     
     /* DQEMU: to deal with false shring. */
-    uint64_t false_sharing_addr[5];
+    uint32_t false_sharing_flag;
+    uint32_t false_sharing_addr[5];
     /* DQEMU: shadow pages. */
-    uint64_t shadow_page_addr[5];
+    uint32_t shadow_page_addr[5];
     
 
 

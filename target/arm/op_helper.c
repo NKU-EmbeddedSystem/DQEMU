@@ -1484,3 +1484,52 @@ void HELPER(offload_cpu_exclusive_insight)(uint32_t val, uint32_t addr)
     //*(uint32_t *)(g2h(addr)) = t;
     //fprintf(stderr, "helper_offload_load_exclusive\taddr:%p\n", addr);
 }
+int fs_flag = 0;
+int fs_addr[5];
+int fs_new[5];
+
+void HELPER(print_aa32_addr)(uint32_t addr)
+{
+    if (!fs_flag) {
+        return;
+    }
+    //extern int offload_server_idx;
+    //if (offload_server_idx > 0)
+    //fprintf(stderr, "[print_aa32_addr]\taa32 addr = %x\n", addr);
+}
+
+typedef struct PageMapDesc_server {
+	int cur_perm;
+	int is_false_sharing;
+	uint32_t shadow_page_addr;
+} PageMapDesc_server;
+extern inline PageMapDesc_server* get_pmd_s(uint32_t page_addr);
+extern int g_false_sharing_flag;
+
+uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
+{
+    /* If there's no false sharing, simply return ASAP. */
+    if (!g_false_sharing_flag) {
+        return addr;
+    }
+    // TODO maybe we can have a 'page cache' here
+    
+    uint32_t page_addr = addr & 0xfffff000;
+    uint32_t page_off = addr & 0xfff;
+    uint32_t newaddr = addr;
+    PageMapDesc_server *pmd = get_pmd_s(page_addr);
+    if (pmd->is_false_sharing) {
+        newaddr = pmd->shadow_page_addr + 
+                (page_off / 64) * 0x1000 + page_off;
+//        fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
+//                        "page addr = %x --> new addr %p\n", 
+//                        addr, newaddr);
+    }
+    else {
+    //    fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
+    //                    "%p pmd->is_falsesharing == %d\n", addr,
+    //                    pmd->is_false_sharing);
+
+    }
+    return newaddr;
+}
