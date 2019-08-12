@@ -853,7 +853,7 @@ void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 	pthread_mutex_lock(&page_process_mutex);
 	PageMapDesc_server *pmd = get_pmd_s(page_addr);
 	if (pmd->cur_perm >= perm) {
-		fprintf(stderr, "[offload_send_page_request_and_wait]\tI think we already have the page.\n");
+		//fprintf(stderr, "[offload_send_page_request_and_wait]\tI think we already have the page.\n");
 		pthread_mutex_unlock(&page_process_mutex);
 		return;
 	}
@@ -947,6 +947,8 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler_positive(uint32_t page_addr, int perm)
 {
+	offload_send_page_request_and_wait(page_addr & 0xfffff000, perm);
+	return 1;
 	//TODO self map to avoid extra fetching
 	struct timeb t, tend;
 	ftime(&t);

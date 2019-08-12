@@ -111,6 +111,7 @@
 #define DQEMU_PAGE_PROCESS_FS	0x4		/* Generating shadow pages. */
 #define DQEMU_PAGE_FS			0x8		/* False sharing page in use. */
 #define DQEMU_PAGE_SHADOW		0x10	/* Shadow page */
+#define DQEMU_PAGE_FS_LOCK		0x16	/* A well done fs page, should never be used again. */
 
 
 target_ulong shadow_page_base = 0xa0000000;
@@ -297,6 +298,7 @@ typedef struct PageMapDesc {
 	req_node list_head; 				/* to record request list */
 	uint32_t flag;
 	uint32_t shadow_page_addr;
+	int fs_notice_count;				/* for the last time use of fs page */
 } PageMapDesc;
 
 PageMapDesc page_map_table[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section"))) __attribute__ ((aligned(4096))) = {0};
@@ -361,10 +363,11 @@ void offload_client_pmd_init(void)
 	{
 		for (int j = 0; j < L2_MAP_TABLE_SIZE; j++)
 		{
-
+			memset(&page_map_table[i][j], 0, sizeof(PageMapDesc));
 			pthread_mutex_init(&page_map_table[i][j].owner_set_mutex, NULL);
 			clear(&page_map_table[i][j].owner_set);
 			insert(&page_map_table[i][j].owner_set, 0);
+			
 			//fprintf(stderr, "%d", page_map_table[i][j].owner_set.size);
 		}
 	}
@@ -566,7 +569,7 @@ static int dump_self_maps(void)
 			}
 
 			fprintf(stderr, "memory region: %x to %x, host: %x to %x, %c%c%c\n", start, end, g2h(start), g2h(end), flag_r, flag_w, flag_x);
-			fprintf(stderr, "[DEBUGGG]\t%lx", g2h(8e568));
+			//fprintf(stderr, "[DEBUGGG]\t%lx", g2h(8e568));
 			*(uint32_t *)p = start;
 			p += sizeof(uint32_t);
 
@@ -2046,6 +2049,7 @@ static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t 
 						page_addr, pmd->flag, perm, pmd->flag & DQEMU_PAGE_PROCESS_FS,
 						perm==2);
 	if ((pmd->flag & DQEMU_PAGE_PROCESS_FS) && (perm == 2)) {
+		/* perm == 2: at this time this is the only copy. */
 		pthread_mutex_lock(&master_mprotect_mutex);
 		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
 		fprintf(stderr, "[offload_send_page_content]\tcopying to %p\n", page_addr);
@@ -2053,7 +2057,6 @@ static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t 
 		offload_client_process_false_sharing_page(page_addr);
 		pthread_mutex_unlock(&master_mprotect_mutex);
 		offload_send_page_wakeup(idx, page_addr);
-
 		return;
 	}
 	char *pp = buf + sizeof(struct tcp_msg_header);

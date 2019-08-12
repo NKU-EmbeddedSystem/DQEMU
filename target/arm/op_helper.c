@@ -1453,7 +1453,7 @@ pthread_mutex_t cmpxchg_mutex = PTHREAD_MUTEX_INITIALIZER;
 void HELPER(offload_cmpxchg_prelude)(uint32_t addr, uint32_t newv, uint32_t cmpv)//, uint32_t retv, uint32_t memop)
 {
     //fprintf(stderr, "helper_offload_cmpxchg_prelude#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
-    if (offload_server_idx != 0)
+    //if (offload_server_idx != 0)
         offload_segfault_handler_positive(addr, 2);
     //if (offload_server_idx!=0)
     //    offload_server_send_cmpxchg_start(addr, cmpv, newv, *(uint32_t *)g2h(addr));

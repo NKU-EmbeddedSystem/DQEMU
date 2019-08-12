@@ -2852,6 +2852,8 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
         tcg_gen_ext_i32(t2, cmpv, memop & MO_SIZE);
 
         tcg_gen_qemu_ld_i32(t1, addr, idx, memop & ~MO_SIGN);
+        /* Make sure we have the write privilege */
+
         tcg_gen_movcond_i32(TCG_COND_EQ, t2, t1, t2, newv, t1);
         tcg_gen_qemu_st_i32(t2, addr, idx, memop);
         tcg_temp_free_i32(t2);
@@ -2887,7 +2889,7 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
         }
     }
 
-	gen_helper_offload_cmpxchg_epilogue((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
+	//gen_helper_offload_cmpxchg_epilogue((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
 }
 
 void tcg_gen_atomic_cmpxchg_i64(TCGv_i64 retv, TCGv addr, TCGv_i64 cmpv,
