@@ -1166,7 +1166,7 @@ static inline TCGv gen_aa32_addr(DisasContext *s, TCGv_i32 a32, TCGMemOp op)
     if (!IS_USER_ONLY && s->sctlr_b && (op & MO_SIZE) < MO_32) {
         tcg_gen_xori_tl(addr, addr, 4 - (1 << (op & MO_SIZE)));
     }
-    gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
+    //gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
     return addr;
 }
 

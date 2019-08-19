@@ -1506,6 +1506,12 @@ typedef struct PageMapDesc_server {
 extern inline PageMapDesc_server* get_pmd_s(uint32_t page_addr);
 extern int g_false_sharing_flag;
 
+/* For dynamic page grain. use */
+/* PAGE_SIZE / MIN_PAGE_GRAIN = MAX_PAGE_SPLIT */
+#define PAGE_SIZE       0x1000
+#define MIN_PAGE_GRAIN  64
+#define MAX_PAGE_SPLIT  (PAGE_SIZE / MIN_PAGE_GRAIN)
+
 uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
 {
     /* If there's no false sharing, simply return ASAP. */
@@ -1520,16 +1526,10 @@ uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
     PageMapDesc_server *pmd = get_pmd_s(page_addr);
     if (pmd->is_false_sharing) {
         newaddr = pmd->shadow_page_addr + 
-                (page_off / 64) * 0x1000 + page_off;
+                (page_off / MIN_PAGE_GRAIN) * PAGE_SIZE + page_off;
 //        fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
 //                        "page addr = %x --> new addr %p\n", 
 //                        addr, newaddr);
-    }
-    else {
-    //    fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
-    //                    "%p pmd->is_falsesharing == %d\n", addr,
-    //                    pmd->is_false_sharing);
-
     }
     return newaddr;
 }

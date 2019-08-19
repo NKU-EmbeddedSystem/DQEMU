@@ -33,16 +33,24 @@ extern pthread_mutex_t global_counter_mutex;
 #define COMM_MAGIC_NR   0x41824182
 #define TCP_HEADER_SIZE (sizeof(struct tcp_msg_header))
 
+// TODO remove counter. useless.
 #define fill_tcp_header(__header, __size, __tag)    \
 	do {                                            \
 	(__header)->magic_nr = COMM_MAGIC_NR;       \
 	(__header)->size     = __size;              \
 	(__header)->tag      = __tag;               \
-	pthread_mutex_lock(&global_counter_mutex);	\
-	(__header)->counter      = ++global_counter;   \
-	fprintf(stderr, "SSSSSSSSSSSending package number %d\n", global_counter); \
-	pthread_mutex_unlock(&global_counter_mutex);	\
 } while (0)
+//// TODO remove counter. useless.
+//#define fill_tcp_header(__header, __size, __tag)    \
+//	do {                                            \
+//	(__header)->magic_nr = COMM_MAGIC_NR;       \
+//	(__header)->size     = __size;              \
+//	(__header)->tag      = __tag;               \
+//	pthread_mutex_lock(&global_counter_mutex);	\
+//	(__header)->counter      = ++global_counter;   \
+//	fprintf(stderr, "SSSSSSSSSSSending package number %d\n", global_counter); \
+//	pthread_mutex_unlock(&global_counter_mutex);	\
+//} while (0)
 
 
 
@@ -110,5 +118,10 @@ static uint32_t get_tag(void);
 #define L2_MAP_TABLE_SIZE (1 << L2_MAP_TABLE_BITS)
 
 #define L1_MAP_TABLE_SHIFT (VIRT_ADDR_SPACE_BITS - 12 - L1_MAP_TABLE_BITS)
+
+/* For dynamic page grain. use */
+/* PAGE_SIZE / MIN_PAGE_GRAIN = MAX_PAGE_SPLIT */
+#define MIN_PAGE_GRAIN 64
+#define MAX_PAGE_SPLIT (PAGE_SIZE / MIN_PAGE_GRAIN)
 
 #endif

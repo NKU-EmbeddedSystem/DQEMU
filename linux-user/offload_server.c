@@ -1590,7 +1590,7 @@ static void offload_server_process_fs_page(void)
 	assert(shadow_page_addr < 0xd0000000);
 	if (offload_server_idx > 0) {
 		int ret = target_mmap(shadow_page_addr, 
-							64*PAGE_SIZE, PROT_NONE,
+							MAX_PAGE_SPLIT*PAGE_SIZE, PROT_NONE,
 							MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 		assert(ret == shadow_page_addr);
 		assert(pmd->cur_perm == 0);
