@@ -115,7 +115,9 @@
 #define DQEMU_PAGE_FS			0x8		/* False sharing page in use. */
 #define DQEMU_PAGE_SHADOW		0x10	/* Shadow page */
 #define DQEMU_PAGE_FS_LOCK		0x16	/* A well done fs page, should never be used again. */
+#define TARGET_PAGE_SIZE PAGE_SIZE
 
+extern int offload_server_idx;
 
 target_ulong shadow_page_base = 0xa0000000;
 static void offload_send_mutex_verified(int);
@@ -140,6 +142,9 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 void offload_connect_online_server(int idx);
 int false_sharing_flag = 0;
 __thread char buf[TARGET_PAGE_SIZE * 2];
+
+extern PageMapDesc_server page_map_table_s[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE];
+extern PageMapDesc_server *get_pmd_s(uint32_t page_addr);
 
 //int requestor_idx, target_ulong addr, int perm
 struct info
@@ -805,9 +810,27 @@ static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 			offload_log(stderr, "[fetch_page_func]\terror: no one has the page\n");
 			exit(-1);
 		}
+		/* check if it already has the page */
+		if ((find(&(pmd->owner_set), requestor_idx) >= 0)) {
+			/* do nothing */
+			offload_log(stderr, "[fetch_page_func]\terror: It alreay has. returning...\n");
+
+			return -3;
+		}
+		else 
+		/* check if node 0 has the page */
+		if ((find(&(pmd->owner_set), 0) >= 0)) {
+			offload_master_send_page(page_addr, perm, requestor_idx);
+		} else {
 		/* revoke page as shared page */
 		offload_send_page_request(pmd->owner_set.element[0], page_addr, 1, requestor_idx);
+		}
 
+	}
+	else {
+
+		offload_log(stderr, "[fetch_page_func]\terror: EINVAL\n");
+		exit(222);
 	}
 	fprintf(stderr, "[fetch_page_func]\t sent\n");
 	return 0;
@@ -920,20 +943,28 @@ static int process_pmd(uint32_t page_addr)
 	
 	/* Deal with the pending request in queue. */
 	req_node *p = pmd->list_head.next;
-	if (p) {
-		show_pmd_list(p);
-		ret = fetch_page_func(p->idx, page_addr, p->perm);
-		if (ret == 0) {
-			pmd->list_head.next = p->next;
-			free(p);
+	while (1) {
+		if (p) {
+			show_pmd_list(p);
+			//if (find(&(pmd->owner_set), p->idx))
+			ret = fetch_page_func(p->idx, page_addr, p->perm);
+			fprintf(stderr, "fetch page ret == %d\n", ret);
+			if (ret == 0) {
+				break;
+			}
+			else if (ret == -3) {
+				pmd->list_head.next = p->next;
+				free(p);
+				p = pmd->list_head.next;
+			}
+			else {
+				exit(111);
+			}
 		}
 		else {
-			fprintf(stderr, "fetch page ret != 0\n");
-			exit(222);
+			pthread_mutex_unlock(&pmd->owner_set_mutex);
+			break;
 		}
-	}
-	else {
-		pthread_mutex_unlock(&pmd->owner_set_mutex);
 	}
 	return 0;
 	
@@ -942,14 +973,22 @@ static int process_pmd(uint32_t page_addr)
 static int offload_client_fetch_page(int requestor_idx, uint32_t addr, int perm)
 {
 
-	offload_log(stderr, "[offload_client_fetch_page]\tadding to list page address %p\n", addr);
+	offload_log(stderr, "[offload_client_fetch_page]\tadding to list page address %p, perm %d\n", addr, perm);
 	/* get the PageMapDesc pointer */
 	PageMapDesc *pmd = get_pmd(addr);
+	req_node *pnode = pmd->list_head.next;
+	while (pnode) {
+		if ((pnode->idx == requestor_idx)
+			&& (pnode->perm == perm)) {
+				return -1;
+			}
+		pnode = pnode->next;
+	}
 	req_node *p = (req_node *)malloc(sizeof(req_node));
 	p->idx = requestor_idx;
 	p->perm = perm;
 	p->next = NULL;
-	req_node *pnode = &(pmd->list_head);
+	pnode = &(pmd->list_head);
 	while (pnode->next != NULL) {
 		pnode = pnode->next;
 	}
@@ -1238,18 +1277,27 @@ static void offload_process_page_request(void)
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
 	fprintf(log, "%d\t%p\t%d\n", offload_client_idx, page_addr, perm);
 	/* Check if already in prefetch list */
-	//int isInPrefetch = (perm == 2)? 0 : prefetch_check(page_addr, offload_client_idx);
+	int isInPrefetch = prefetch_check(page_addr, offload_client_idx);
 	/* Hit already splited false sharing page. */
 	fprintf(stderr, "[offload_process_page_request client#%d]\tpage flag %p\n", pmd->flag);
 	//if (pmd->flag & DQEMU_PAGE_FS) {
 	//	offload_send_page_wakeup(offload_client_idx, page_addr);
 	//}
 	if (perm == 2) {
-		offload_client_fetch_page(offload_client_idx, page_addr, perm);
+			offload_client_fetch_page(offload_client_idx, page_addr, 2);
 	}
 	else {
-		for (int i = -50; i < 50; i++) {
-			offload_client_fetch_page(offload_client_idx, page_addr + i * PAGE_SIZE, 1);
+		if (page_addr > 0xff000000) {
+			uint32_t start	= page_addr & 0xffff0000;
+			for (int i = 0; i < 0x10; i++) {
+				offload_client_fetch_page(offload_client_idx, start + i * PAGE_SIZE, 1);
+			}
+		}
+		else {
+			for (int i = -50; i < 50; i++) {
+				offload_client_fetch_page(offload_client_idx, page_addr + i * PAGE_SIZE, 1);
+			}
+
 		}
 	}
 	
@@ -2055,22 +2103,22 @@ static void offload_send_page_wakeup(int idx, target_ulong page_addr)
 }
 static void offload_send_page_content(int idx, target_ulong page_addr, uint32_t perm, char *content)
 {
-	PageMapDesc *pmd = get_pmd(page_addr);
-	/* If this is a fs page need to be processed and no one but us has the page now. */
-	fprintf(stderr, "[offload_send_page_content]\t%p page bit = %p perm = %d, c1 %d c2 %d\n", 
-						page_addr, pmd->flag, perm, pmd->flag & DQEMU_PAGE_PROCESS_FS,
-						perm==2);
-	if ((pmd->flag & DQEMU_PAGE_PROCESS_FS) && (perm == 2)) {
-		/* perm == 2: at this time this is the only copy. */
-		pthread_mutex_lock(&master_mprotect_mutex);
-		mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
-		fprintf(stderr, "[offload_send_page_content]\tcopying to %p\n", page_addr);
-		memcpy(g2h(page_addr), content, TARGET_PAGE_SIZE);
-		offload_client_process_false_sharing_page(page_addr);
-		pthread_mutex_unlock(&master_mprotect_mutex);
-		offload_send_page_wakeup(idx, page_addr);
-		return;
-	}
+	//PageMapDesc *pmd = get_pmd(page_addr);
+	///* If this is a fs page need to be processed and no one but us has the page now. */
+	//fprintf(stderr, "[offload_send_page_content]\t%p page bit = %p perm = %d, c1 %d c2 %d\n", 
+	//					page_addr, pmd->flag, perm, pmd->flag & DQEMU_PAGE_PROCESS_FS,
+	//					perm==2);
+	//if ((pmd->flag & DQEMU_PAGE_PROCESS_FS) && (perm == 2)) {
+	//	/* perm == 2: at this time this is the only copy. */
+	//	pthread_mutex_lock(&master_mprotect_mutex);
+	//	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
+	//	fprintf(stderr, "[offload_send_page_content]\tcopying to %p\n", page_addr);
+	//	memcpy(g2h(page_addr), content, TARGET_PAGE_SIZE);
+	//	offload_client_process_false_sharing_page(page_addr);
+	//	pthread_mutex_unlock(&master_mprotect_mutex);
+	//	offload_send_page_wakeup(idx, page_addr);
+	//	return;
+	//}
 	char *pp = buf + sizeof(struct tcp_msg_header);
 	//fprintf(stderr, "[offload_send_page_content]\tp: %p, net_buffer: %p\n", p, net_buffer);
 	*((target_ulong *) pp) = page_addr;
@@ -2197,6 +2245,9 @@ static void offload_process_page_ack(void)
 	}
 	insert(&pmd->owner_set, offload_client_idx);
 
+	req_node *pnode = pmd->list_head.next;
+	pmd->list_head.next = pnode->next;
+	free(pnode);
 	fprintf(stderr, "[offload_process_page_ack]\tunlocking...%p\n", &pmd->owner_set_mutex);
 	pthread_mutex_unlock(&pmd->owner_set_mutex);
 
@@ -2574,4 +2625,57 @@ static int prefetch_handler(uint32_t page_addr, int idx)
 	show_prefetch_list(idx);
 	
 	return ret;
+}
+
+void offload_master_send_page(uint32_t page_addr, int perm, int idx)
+{
+	PageMapDesc_server *pmd = get_pmd_s(page_addr);
+	fprintf(stderr, "[offload_master_send_page]\tpage %x, perm %d, for %d\n", page_addr, perm, idx);
+	pmd->cur_perm = 1;
+		pthread_mutex_lock(&master_mprotect_mutex);
+	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
+
+	char buf[TARGET_PAGE_SIZE * 2];
+	char *p = buf + sizeof(struct tcp_msg_header);
+	/* fill addr and perm */
+	*((uint32_t *) p) = page_addr;
+    p += sizeof(uint32_t);
+	*((uint32_t *) p) = perm;
+	p += sizeof(uint32_t);
+    /* followed by page content (size = TARGET_PAGE_SIZE) */
+	fprintf(stderr, "[offload_master_send_pageDEBUG]\tPOINT1\n");
+	//TODO: 如果是2就直接disable了 如果是1就發送。
+	//mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ | PROT_WRITE);
+	fprintf(stderr, "[offload_master_send_pageDEBUG]\tPOINT1.5\n");
+	memcpy(p, g2h(page_addr), TARGET_PAGE_SIZE);
+	fprintf(stderr, "[offload_master_send_pageDEBUG]\tPOINT2\n");
+    p += PAGE_SIZE;
+	/* fill head */
+	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
+	fill_tcp_header(tcp_header, p - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_PAGE_CONTENT);
+	fprintf(stderr, "[offload_master_send_pageDEBUG]\tPOINT3\n");
+	int res = autoSend(idx, buf, p - buf, 0);
+	if (res < 0)
+	{
+		fprintf(stderr, "[offload_master_send_page]\tsent page %x content failed\n", page_addr);
+		exit(0);
+	}
+	fprintf(stderr, "[offload_master_send_page]\tsent page %x content, perm%d, packet#%d\n", page_addr, perm, get_number());
+	fprintf(stderr, "[offload_master_send_page]\tsent content\n", page_addr, perm);
+	/*	if required permission is WRITE|READ,
+	*	we won't be able to use it (invalidate)
+	*	otherwise it is a shared page (shared)
+	*/
+	
+	if (perm == 2)
+	{
+		mprotect(g2h(page_addr), PAGE_SIZE, PROT_NONE);
+		pmd->cur_perm = 0;
+	}
+	else if (perm == 1)
+	{
+		mprotect(g2h(page_addr), PAGE_SIZE, PROT_READ);
+		pmd->cur_perm = 1;
+	}
+		pthread_mutex_unlock(&master_mprotect_mutex);
 }

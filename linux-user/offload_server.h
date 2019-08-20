@@ -30,13 +30,7 @@
 #define MAP_PAGE_BITS 12
 void offload_send_page_request_and_wait(uint32_t page_addr, int perm);
 void* offload_server_start_thread(void* arg);
-typedef struct PageMapDesc_server {
-	int cur_perm;
-	int is_false_sharing;
-	uint32_t shadow_page_addr;
-} PageMapDesc_server;
-PageMapDesc_server page_map_table_s[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section_server"))) __attribute__ ((aligned(4096))) = {0};
-PageMapDesc_server *get_pmd_s(uint32_t page_addr);
+
 /* Wake up main exec thread. */
 extern pthread_mutex_t main_exec_mutex;
 extern pthread_cond_t main_exec_cond;
@@ -98,5 +92,7 @@ extern void end_exclusive(void);
 static void offload_server_process_fs_page(void);
 static void offload_server_process_page_wakeup(void);
 
+PageMapDesc_server page_map_table_s[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section_server"))) __attribute__ ((aligned(4096))) = {0};
+PageMapDesc_server *get_pmd_s(uint32_t page_addr);
 
 #endif

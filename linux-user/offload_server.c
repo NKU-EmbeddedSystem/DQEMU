@@ -671,17 +671,17 @@ static void offload_process_page_request(void)
 	}
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
 
-	if (page_addr == 0x78000)
-	{
-		fprintf(stderr, "[offload_process_page_request]\tdebug\t0x78f4c = %d", *(int *)(g2h(0x78f4c)));
-	}
-	/* debug pthread_mutex_struct */
-	if (page_addr == 0x78000)
-	{
-		fprintf(stderr, "[offload_process_page_request]\tdebug\t__lock0x77f34 = %d", *(int *)(g2h(0x78f34)));
-		fprintf(stderr, "[offload_process_page_request]\tdebug\t__count0x77f38 = %d", *(int *)(g2h(0x78f38)));
-		fprintf(stderr, "[offload_process_page_request]\tdebug\t__owner0x77f40 = %d", *(int *)(g2h(0x78f3C)));
-	}
+	//if (page_addr == 0x78000)
+	//{
+	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t0x78f4c = %d", *(int *)(g2h(0x78f4c)));
+	//}
+	///* debug pthread_mutex_struct */
+	//if (page_addr == 0x78000)
+	//{
+	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t__lock0x77f34 = %d", *(int *)(g2h(0x78f34)));
+	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t__count0x77f38 = %d", *(int *)(g2h(0x78f38)));
+	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t__owner0x77f40 = %d", *(int *)(g2h(0x78f3C)));
+	//}
 	offload_send_page_content(page_addr, perm, forwho);
 	fprintf(stderr, "[offload_process_page_request]\tsent content\n", page_addr, perm);
 	/*	if required permission is WRITE|READ,
