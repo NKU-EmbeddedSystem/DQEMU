@@ -2,7 +2,7 @@
 
 #include "offload_server.h"
 
-#define MAX_OFFLOAD_THREAD_IN_NODE 16
+#define MAX_OFFLOAD_THREAD_IN_NODE 128
 
 extern __thread CPUArchState *thread_env;
 

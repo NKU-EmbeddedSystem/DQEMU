@@ -9074,6 +9074,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         if (arg3 == 0)
             ret = 0;
         else {
+
+            extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
+			offload_segfault_handler_positive(arg2, 2);
             if (!(p = lock_user(VERIFY_WRITE, arg2, arg3, 0)))
                 goto efault;
             ret = get_errno(safe_read(arg1, p, arg3));

@@ -873,8 +873,9 @@ void offload_server_extra_init(void)
 }
 /* To manipulate guest thread's server. 
  * Short for guest thread place*/
-int gst_thrd_plc[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-gst_thrd_info_t gst_thrd_info[32];
+#define GUEST_THREAD_MAX 128
+int gst_thrd_plc[GUEST_THREAD_MAX] = {1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0};
+gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
 
 pthread_t center_server_thread;
 extern void offload_client_pmd_init(void);
@@ -910,9 +911,9 @@ int main(int argc, char **argv, char **envp)
         /* Process guest thread info, format: [server idx -> thread idx]. */
 		fprintf(stderr, ">>>>>>>>>>>> [Master]. Guest thread placement:\n");
         /* Note that 0->0 is the main thread. */
-        int server_thread_count[32] = {1, 0};
+        int server_thread_count[GUEST_THREAD_MAX] = {1, 0};
         int server_idx = 0;
-        for (int i = 0; i < 32; i++) {
+        for (int i = 0; i < GUEST_THREAD_MAX; i++) {
             server_idx = gst_thrd_plc[i];
             gst_thrd_info[i].server_idx = server_idx;
             gst_thrd_info[i].thread_idx = server_thread_count[server_idx]++;

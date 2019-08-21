@@ -1331,7 +1331,7 @@ static void offload_process_page_request(void)
 			}
 		}
 		else {
-			for (int i = -50; i < 50; i++) {
+			for (int i = 0; i < 1; i++) {
 				offload_client_fetch_page(offload_client_idx, page_addr + i * PAGE_SIZE, 1);
 			}
 
@@ -1946,7 +1946,8 @@ void syscall_daemonize(void)
 		else
 		{
 			/* Common syscalls. */
-			if ((num == TARGET_NR_write)) {
+			if ((num == TARGET_NR_write)
+				|| num == TARGET_NR_read) {
 				offload_segfault_handler_positive(arg2, 1);
 				fprintf(stderr, "[syscall_daemonize]\tfetching write, %d %c %d\n", arg1, *(char*)g2h(arg2), arg3);
 			}
