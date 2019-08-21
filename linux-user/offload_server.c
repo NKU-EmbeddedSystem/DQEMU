@@ -246,7 +246,7 @@ static void load_memory_region(void)
 		int ret = target_mmap(addr, page_num * TARGET_PAGE_SIZE, PROT_NONE,
 							MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 		fprintf(stderr, "[load_memory_region]\tReturn mem addr = %p\n", ret);
-		assert(ret == addr);
+		//assert(ret == addr);
 		//mprotect(g2h(addr), page_num * TARGET_PAGE_SIZE, PROT_NONE);
     }
 	first = 0;

@@ -873,7 +873,7 @@ void offload_server_extra_init(void)
 }
 /* To manipulate guest thread's server. 
  * Short for guest thread place*/
-int gst_thrd_plc[32] = {1,0,0,0,1,1,1,1,2,2,2,2,0,0,0,0};
+int gst_thrd_plc[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 gst_thrd_info_t gst_thrd_info[32];
 
 pthread_t center_server_thread;

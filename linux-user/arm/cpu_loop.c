@@ -378,6 +378,8 @@ void cpu_loop(CPUARMState *env)
                             || n == TARGET_NR_madvise
                             || n == TARGET_NR_mprotect
                             || n == TARGET_NR_munmap
+                            || n == TARGET_NR_clone
+                            || n == TARGET_NR_vfork
                             //|| (n == TARGET_NR_futex && env->regs[1] != 128)
                             ) && offload_server_idx>0)
                         {

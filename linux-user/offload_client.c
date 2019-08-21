@@ -1278,6 +1278,7 @@ static void offload_process_page_request(void)
 	fprintf(log, "%d\t%p\t%d\n", offload_client_idx, page_addr, perm);
 	/* Check if already in prefetch list */
 	int isInPrefetch = prefetch_check(page_addr, offload_client_idx);
+	isInPrefetch = 0;
 	/* Hit already splited false sharing page. */
 	fprintf(stderr, "[offload_process_page_request client#%d]\tpage flag %p\n", pmd->flag);
 	//if (pmd->flag & DQEMU_PAGE_FS) {
@@ -1285,6 +1286,42 @@ static void offload_process_page_request(void)
 	//}
 	if (perm == 2) {
 			offload_client_fetch_page(offload_client_idx, page_addr, 2);
+			
+			//uint32_t start	= page_addr & 0xffff0000;
+			//for (int i = 0; i < 0x10; i++) {
+			//	offload_client_fetch_page(offload_client_idx, start + i * PAGE_SIZE, 2);
+			//}
+		if (isInPrefetch < 0)
+		{
+			fprintf(stderr, "[offload_process_page_request client#%d]\tIn list, prefetch stops\n", offload_client_idx);
+			return;
+		}
+		else {
+			int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
+			if (prefetch_count < 0) {
+			/* False sharing page. */
+			//	fprintf(stderr, "[offload_process_page_request client#%d]\t"
+			//			"Prefetch count = %d, false sharing page!\n", offload_client_idx, 
+			//			prefetch_count);
+			//	/* Mark the page in false sharing process. */
+			//	if (pmd->flag & DQEMU_PAGE_SHADOW) {
+			//		fprintf(stderr, "[offload_process_page_request client#%d]\t"
+			//				"already is shadow page! wo to le! %p\n", offload_client_idx, 
+			//				page_addr);
+			//		//exit(2);
+			//	}
+			//	if (!(pmd->flag & DQEMU_PAGE_FS) && !(pmd->flag & DQEMU_PAGE_PROCESS_FS) 
+			//		&& !(pmd->flag & DQEMU_PAGE_SHADOW))
+			//		dqemu_set_page_bit(page_addr, DQEMU_PAGE_PROCESS_FS);
+			//	//exit(3);
+			}
+			else if (prefetch_count > 0) {
+				fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
+				for (int i = 0; i < prefetch_count; i++) {
+					offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, 2);
+				}
+			}
+		}
 	}
 	else {
 		if (page_addr > 0xff000000) {
@@ -1301,37 +1338,6 @@ static void offload_process_page_request(void)
 		}
 	}
 	
-	//if (isInPrefetch < 0)
-	//{
-	//	fprintf(stderr, "[offload_process_page_request client#%d]\tIn list, prefetch stops\n", offload_client_idx);
-	//	return;
-	//}
-	//else {
-	//	int prefetch_count = prefetch_handler(page_addr, offload_client_idx);
-	//	/* False sharing page. */
-	//	if (prefetch_count < 0) {
-	//	//	fprintf(stderr, "[offload_process_page_request client#%d]\t"
-	//	//			"Prefetch count = %d, false sharing page!\n", offload_client_idx, 
-	//	//			prefetch_count);
-	//	//	/* Mark the page in false sharing process. */
-	//	//	if (pmd->flag & DQEMU_PAGE_SHADOW) {
-	//	//		fprintf(stderr, "[offload_process_page_request client#%d]\t"
-	//	//				"already is shadow page! wo to le! %p\n", offload_client_idx, 
-	//	//				page_addr);
-	//	//		//exit(2);
-	//	//	}
-	//	//	if (!(pmd->flag & DQEMU_PAGE_FS) && !(pmd->flag & DQEMU_PAGE_PROCESS_FS) 
-	//	//		&& !(pmd->flag & DQEMU_PAGE_SHADOW))
-	//	//		dqemu_set_page_bit(page_addr, DQEMU_PAGE_PROCESS_FS);
-	//	//	//exit(3);
-	//	}
-	//	else if (prefetch_count > 0 && perm != 2) {
-	//		fprintf(stderr, "[offload_process_page_request client#%d]\tPrefetching for next %d pages\n", offload_client_idx, prefetch_count);
-	//		for (int i = 0; i < prefetch_count; i++) {
-	//			offload_client_fetch_page(offload_client_idx, page_addr + (i+1)*PAGE_SIZE, 1);
-	//		}
-	//	}
-	//}
 }
 
 static int try_recv(int size)
