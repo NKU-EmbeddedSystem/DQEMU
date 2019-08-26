@@ -1331,7 +1331,7 @@ static void offload_process_page_request(void)
 			}
 		}
 		else {
-			for (int i = 0; i < 1; i++) {
+			for (int i = 0; i < 0x50; i++) {
 				offload_client_fetch_page(offload_client_idx, page_addr + i * PAGE_SIZE, 1);
 			}
 

@@ -874,7 +874,8 @@ void offload_server_extra_init(void)
 /* To manipulate guest thread's server. 
  * Short for guest thread place*/
 #define GUEST_THREAD_MAX 128
-int gst_thrd_plc[GUEST_THREAD_MAX] = {1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0};
+int gst_thrd_plc[GUEST_THREAD_MAX] = {0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+            //{0};
 gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
 
 pthread_t center_server_thread;

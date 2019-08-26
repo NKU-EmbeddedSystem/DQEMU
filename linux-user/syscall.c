@@ -6501,6 +6501,10 @@ static void *clone_func(void *arg)
     pthread_mutex_unlock(&clone_lock);
     
     if (to_exit) {
+        cpu_list_lock();
+        QTAILQ_REMOVE(&cpus, cpu, node);
+        cpu_list_unlock();
+        object_unref(OBJECT(cpu));
         pthread_exit(NULL);
     }
     offload_client_daemonize();
