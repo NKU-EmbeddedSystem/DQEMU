@@ -13,7 +13,9 @@ static pthread_mutex_t page_recv_mutex[MAX_OFFLOAD_THREAD_IN_NODE];
 static pthread_cond_t page_recv_cond[MAX_OFFLOAD_THREAD_IN_NODE];
 static uint32_t page_recv_addr[MAX_OFFLOAD_THREAD_IN_NODE];
 static int page_syscall_recv_flag; static pthread_mutex_t page_syscall_recv_mutex; static pthread_cond_t page_syscall_recv_cond;
-static int mutex_ready_flag; static pthread_mutex_t mutex_recv_mutex; static pthread_cond_t mutex_recv_cond;
+static int mutex_ready_flag[MAX_OFFLOAD_THREAD_IN_NODE]; 
+static pthread_mutex_t mutex_recv_mutex[MAX_OFFLOAD_THREAD_IN_NODE]; 
+static pthread_cond_t mutex_recv_cond[MAX_OFFLOAD_THREAD_IN_NODE];
 static int cpu_exit_flag; static pthread_mutex_t exit_recv_mutex; static pthread_cond_t exit_recv_cond;
 static int syscall_ready_flag[MAX_OFFLOAD_THREAD_IN_NODE]; 
 static pthread_mutex_t syscall_recv_mutex[MAX_OFFLOAD_THREAD_IN_NODE]; 
@@ -105,8 +107,6 @@ static void offload_server_init(void)
 	
 	pthread_mutex_init(&page_syscall_recv_mutex,NULL);
 	pthread_cond_init(&page_syscall_recv_cond,NULL);
-	pthread_mutex_init(&mutex_recv_mutex, NULL);
-	pthread_cond_init(&mutex_recv_cond, NULL);
 	pthread_mutex_init(&exit_recv_cond,NULL);
 	pthread_cond_init(&exit_recv_mutex,NULL);
 	for (int i = 0; i < MAX_OFFLOAD_THREAD_IN_NODE; i++) {
@@ -114,6 +114,8 @@ static void offload_server_init(void)
 		pthread_mutex_init(&syscall_recv_cond[i],NULL);
 		pthread_mutex_init(&page_recv_mutex[i], NULL);
 		pthread_cond_init(&page_recv_cond[i], NULL);
+		pthread_mutex_init(&mutex_recv_mutex[i], NULL);
+		pthread_cond_init(&mutex_recv_cond[i], NULL);
 	}
 	pthread_mutex_init(&futex_mutex, NULL);
 	pthread_cond_init(&futex_cond, NULL);
@@ -568,7 +570,7 @@ static void offload_process_start(void)
 
 /* send mutex request in order to fetch a free lock 
 	|MUTEX_REQUEST|mutex_addr|					*/
-void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint32_t newv, uint32_t strv)
+void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint32_t newv)
 {
 	//!!!
 	//mutex_addr = h2g(mutex_addr);
@@ -583,8 +585,8 @@ void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint3
 	pp += sizeof(uint32_t);
 	*((uint32_t *)pp) = newv;
 	pp += sizeof(uint32_t);
-	*((uint32_t *)pp) = strv;
-	pp += sizeof(uint32_t);
+	*((int *)pp) = offload_thread_idx;
+	pp += sizeof(int);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_REQUEST);
 	/* we should lock first in case verified returns before we sleep!!!!!! */
@@ -597,13 +599,13 @@ void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint3
 		exit(0);
 	}
 	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...offload_server_idx=%d\n", mutex_addr, get_number(), offload_server_idx);
-	fprintf(stderr, "[cmpxchg_request]\tcas addr %p, idx %d, cmpv %x, newv %x, strv %x\n", mutex_addr, offload_server_idx, cmpv, newv, strv);
-	mutex_ready_flag = 0;
-	while (mutex_ready_flag == 0)
+	fprintf(stderr, "[cmpxchg_request]\tcas addr %p, idx %d, cmpv %x, newv %x\n", mutex_addr, offload_server_idx, cmpv, newv);
+	mutex_ready_flag[offload_thread_idx] = 0;
+	while (mutex_ready_flag[offload_thread_idx] == 0)
 	{
-		pthread_cond_wait(&mutex_recv_cond, &mutex_recv_mutex);
+		pthread_cond_wait(&mutex_recv_cond[offload_thread_idx], &mutex_recv_mutex[offload_thread_idx]);
 	}
-	pthread_mutex_unlock(&mutex_recv_mutex);
+	pthread_mutex_unlock(&mutex_recv_mutex[offload_thread_idx]);
 	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, I'm awake!\n", mutex_addr, get_number());
 
 }
@@ -611,11 +613,15 @@ void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint3
 static void offload_server_process_mutex_verified(void)
 {
 		//pthread_mutex_lock(&socket_mutex);
-	fprintf(stderr, "[offload_server_process_mutex_verified]\twaking up thread\n");
-	pthread_mutex_lock(&mutex_recv_mutex);
-	mutex_ready_flag = 1;
-	pthread_cond_signal(&mutex_recv_cond);
-	pthread_mutex_unlock(&mutex_recv_mutex);
+	p = net_buffer;
+	int thread_idx = *((int *) p);
+    p += sizeof(int);
+	fprintf(stderr, "[offload_server_process_mutex_verified]\twaking up thread %d->%d\n",
+							offload_server_idx, thread_idx);
+	pthread_mutex_lock(&mutex_recv_mutex[thread_idx]);
+	mutex_ready_flag[thread_idx] = 1;
+	pthread_cond_signal(&mutex_recv_cond[thread_idx]);
+	pthread_mutex_unlock(&mutex_recv_mutex[thread_idx]);
 	//if (mutex_ready_flag == 0) offload_server_process_mutex_verified();
 }
 
@@ -1113,8 +1119,8 @@ static void offload_server_daemonize(void)
 				break;
 
 			case TAG_OFFLOAD_CMPXCHG_VERYFIED:
-				fprintf(stderr, "[offload_server_daemonize]\ttag: cmpxchg verified, size = %d(should be 0)\n", size);
-				//try_recv(size);
+				fprintf(stderr, "[offload_server_daemonize]\ttag: cmpxchg verified, size = %d(should be 4)\n", size);
+				try_recv(size);
 				offload_server_process_mutex_verified();
 				break;
 
@@ -1197,9 +1203,9 @@ void* offload_server_start_thread(void* arg)
 	
 }
 
-void offload_server_send_cmpxchg_start(uint32_t cas_addr, uint32_t cmpv, uint32_t newv, uint32_t strv)
+void offload_server_send_cmpxchg_start(uint32_t cas_addr, uint32_t cmpv, uint32_t newv)
 {
-	offload_server_send_mutex_request(cas_addr, cmpv, newv, strv);
+	offload_server_send_mutex_request(cas_addr, cmpv, newv);
 }
 
 /* send |MUTEX_DONE|mutex_addr|idx| */
@@ -1216,6 +1222,8 @@ static void offload_send_mutex_done(uint32_t mutex_addr, uint32_t nowv)
 	p += sizeof(uint32_t);
 	*((uint32_t *)p) = nowv;
 	p += sizeof(uint32_t);
+	*((int *)p) = offload_thread_idx;
+	p += sizeof(int);
 	/* fill head, tag = MUTEX_DONE */
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, p - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_DONE);

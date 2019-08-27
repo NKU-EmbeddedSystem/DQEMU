@@ -120,7 +120,7 @@
 extern int offload_server_idx;
 
 target_ulong shadow_page_base = 0xa0000000;
-static void offload_send_mutex_verified(int);
+static void offload_send_mutex_verified(int, int);
 
 static void offload_send_page_wakeup(int idx, target_ulong page_addr);
 static void offload_process_mutex_done(void);
@@ -243,6 +243,7 @@ typedef struct cas_record
 	uint32_t cas_addr;
 	uint32_t cas_value;
 	int user;
+	int user_thread_idx;
 	struct cas_record *next;
 	struct cas_node *req_list;
 } cas_record;
@@ -253,6 +254,7 @@ typedef struct cas_node
 	uint32_t newv;
 	uint32_t strv;
 	int idx;
+	int thread_idx;
 	struct cas_node *next;
 } cas_node;
 
@@ -1037,7 +1039,7 @@ static void offload_show_mutex_list(void)
 
 static void show_cas_list()
 {
-	return;
+	//return;
 	cas_record *tmp = cas_list.next;
 	cas_node *p;
 	char buff[1024];
@@ -1047,15 +1049,15 @@ static void show_cas_list()
 	while (tmp)
 	{
 		//fprintf(stderr, "[show_cas_list]\tDEBUG 1\n");
-		sprintf(buff, "%s\t\t\tcas_addr %p, cas_user %d, cas_val %x | list:",
-						buff, tmp->cas_addr, tmp->user, tmp->cas_value);
+		sprintf(buff, "%s\t\t\tcas_addr %p, cas_user %d->%d, cas_val %x | list:",
+						buff, tmp->cas_addr, tmp->user, tmp->user_thread_idx, tmp->cas_value);
 		/* show the pending list */
 		p = tmp->req_list;
 		while (p)
 		{
 			//fprintf(stderr, "[show_cas_list]\tDEBUG 2\n");
-			sprintf(buff, "%s, id %d, cmpv %x, newv %x, strv %x",
-							buff, p->idx, p->cmpv, p->newv, p->strv);
+			sprintf(buff, "%s, id %d->%d, cmpv %x, newv %x, strv %x",
+							buff, p->idx, p->thread_idx, p->cmpv, p->newv, p->strv);
 			p = p->next;
 		}
 		sprintf(buff, "%s\n", buff);
@@ -1101,13 +1103,14 @@ static cas_record* cas_list_add_record(uint32_t cas_addr, uint32_t cas_val)
  * return 1 if it is a valid request and no one's using the cas -- it is good to go
  * else return 0
  */ 
-static int cas_list_add_request(cas_record *record, int idx, uint32_t cmpv, uint32_t newv, uint32_t strv)
+static int cas_list_add_request(cas_record *record, int idx, uint32_t cmpv, uint32_t newv, uint32_t strv, int thread_idx)
 {
-	fprintf(stderr, "[cas_list_add_request]\tnew request cas_addr %p, idx %d, cmpv %x, newv %x, strv %x\n"
-															,record->cas_addr, idx, cmpv, newv, strv);
+	fprintf(stderr, "[cas_list_add_request]\tnew request cas_addr %p, idx %d->%d, cmpv %x, newv %x, strv %x\n"
+															,record->cas_addr, idx, thread_idx, cmpv, newv, strv);
 	int is_first = (record->req_list == NULL) ? 1 : 0;
 	cas_node *p = (cas_node *)malloc(sizeof(cas_node));
 	p->idx = idx;
+	p->thread_idx = thread_idx;
 	p->cmpv = cmpv;
 	p->newv = newv;
 	p->strv = strv;
@@ -1159,9 +1162,12 @@ static void offload_process_mutex_request(void)
 	p += sizeof(uint32_t);
 	uint32_t newv = *(uint32_t*)p;
 	p += sizeof(uint32_t);
-	uint32_t strv = *(uint32_t*)p;
-	fprintf(stderr, "[offload_process_mutex_request client#%d]\trequested mutex address: %p from %d, cmpv %x, newv %x, strv %x\n", 
-					offload_client_idx, cas_addr, requestorId, cmpv, newv, strv);
+	int thread_idx = *(int *)p;
+	p += sizeof(int);
+	offload_segfault_handler_positive(cas_addr, 2);
+	int strv = *(int*)g2h(cas_addr);
+	fprintf(stderr, "[offload_process_mutex_request client#%d]\trequested mutex address: %p from %d, cmpv %x, newv %x, strv %x from %d->%d\n", 
+					offload_client_idx, cas_addr, requestorId, cmpv, newv, strv, offload_client_idx, thread_idx);
 	pthread_mutex_lock(&g_cas_mutex);
 	show_cas_list();
 	cas_record *record = cas_list_lookup(cas_addr);
@@ -1171,11 +1177,12 @@ static void offload_process_mutex_request(void)
 		assert(cmpv == strv);
 		record = cas_list_add_record(cas_addr, strv);
 	}
-	int good_to_go = cas_list_add_request(record, requestorId, cmpv, newv, strv);
+	int good_to_go = cas_list_add_request(record, requestorId, cmpv, newv, strv, thread_idx);
 	show_cas_list();
 	if (good_to_go == 1) {
 		record->user = requestorId;
-		offload_send_mutex_verified(requestorId);
+		record->user_thread_idx = thread_idx;
+		offload_send_mutex_verified(requestorId, thread_idx);
 	}
 	show_cas_list();
 	pthread_mutex_unlock(&g_cas_mutex);
@@ -2155,24 +2162,27 @@ static void offload_process_mutex_done(void)
 	uint32_t idx = *(uint32_t *)p;
 	p += sizeof(uint32_t);
 	uint32_t nowv = *(uint32_t *)p;
-	fprintf(stderr, "[offload_process_mutex_done]\tcas done signal %p from #%d, nowv %x\n", cas_addr, idx, nowv);
+	p += sizeof(uint32_t);
+	int thread_idx = *(int*) p;
+	fprintf(stderr, "[offload_process_mutex_done]\tcas done signal %p from #%d->%d, nowv %x\n", cas_addr, idx, thread_idx, nowv);
 	pthread_mutex_lock(&g_cas_mutex);
 	show_cas_list();
 	cas_record *record = cas_list_lookup(cas_addr);
 	assert(record != NULL);
 	assert(record->user == idx);
+	assert(record->user_thread_idx == thread_idx);
 	cas_node *tmp = record->req_list, *tmp2;
 	assert(tmp != NULL);
 	fprintf(stderr, "[offload_process_mutex_done]\tRemoving pending request...\n");
 	/* Remove the pending request. shitty things to do if there's not a head in list */
-	if (tmp->idx == idx) {
+	if ((tmp->idx == idx) && (tmp->thread_idx == thread_idx)) {
 		/* It should not fail. */
 		assert(tmp->newv == nowv);
 		record->req_list = tmp->next;
 		free(tmp);
 	}
 	else {
-		while (tmp->next && tmp->next->idx != idx) {
+		while (tmp->next && !((tmp->next->idx == idx) && (tmp->next->thread_idx == thread_idx))) {
 			tmp = tmp->next;
 		}
 		/* there must be a pending request! */
@@ -2184,6 +2194,7 @@ static void offload_process_mutex_done(void)
 		free(tmp2);
 	}
 	record->user = -1;
+	record->user_thread_idx = -1;
 	record->cas_value = nowv;
 	show_cas_list();
 	/* look up valid pending request */
@@ -2196,7 +2207,8 @@ static void offload_process_mutex_done(void)
 	}
 	if (tmp) {
 		record->user = tmp->idx;
-		offload_send_mutex_verified(tmp->idx);
+		record->user_thread_idx = tmp->thread_idx;
+		offload_send_mutex_verified(tmp->idx, tmp->thread_idx);
 	}
 	else {
 		fprintf(stderr, "[offload_process_mutex_done]\tno valid user!\n");
@@ -2205,14 +2217,16 @@ static void offload_process_mutex_done(void)
 	pthread_mutex_unlock(&g_cas_mutex);
 }
 
-static void offload_send_mutex_verified(int idx)
+static void offload_send_mutex_verified(int idx, int thread_idx)
 {
 	char buf[TARGET_PAGE_SIZE * 2];
 	char *pp = buf + sizeof(struct tcp_msg_header);
+	*((int *)pp) = thread_idx; 
+	pp += sizeof(int);
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_CMPXCHG_VERYFIED);
 	autoSend(idx, buf, pp - buf, 0);
-	fprintf(stderr, "[offload_send_cmpxchg_verified]\tsent cmpxchg verified to #%d packet#%d\n", idx, get_number());
+	fprintf(stderr, "[offload_send_cmpxchg_verified]\tsent cmpxchg verified to #%d->%d packet#%d\n", idx, thread_idx, get_number());
 }
 
 static void offload_send_tid(int idx, uint32_t tid)

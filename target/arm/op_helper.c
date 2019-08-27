@@ -1445,7 +1445,7 @@ uint32_t HELPER(ror_cc)(CPUARMState *env, uint32_t x, uint32_t i)
 
 #include <pthread.h>
 
-extern void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
+extern void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t);
 extern void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
 extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
 extern int offload_server_idx;
@@ -1454,16 +1454,16 @@ void HELPER(offload_cmpxchg_prelude)(uint32_t addr, uint32_t newv, uint32_t cmpv
 {
     //fprintf(stderr, "helper_offload_cmpxchg_prelude#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
     //if (offload_server_idx != 0)
-        offload_segfault_handler_positive(addr, 2);
+    //    offload_segfault_handler_positive(addr, 2);
     //if (offload_server_idx!=0)
-    //    offload_server_send_cmpxchg_start(addr, cmpv, newv, *(uint32_t *)g2h(addr));
+        offload_server_send_cmpxchg_start(addr, cmpv, newv);
 }
 
 void HELPER(offload_cmpxchg_epilogue)(uint32_t addr, uint32_t newv, uint32_t cmpv)
 {
     //fprintf(stderr, "helper_offload_cmpxchg_epilogue#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
     //if (offload_server_idx != 0)
-    //    offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
+        offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
 }
 
 void HELPER(offload_load_exclusive)(uint32_t addr)

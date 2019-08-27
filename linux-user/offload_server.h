@@ -64,7 +64,7 @@ static void offload_server_send_futex_wait_request(target_ulong uaddr, int op, i
 int offload_server_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_send_page_request(target_ulong page_addr, uint32_t perm);
 int offload_segfault_handler_positive(uint32_t page_addr, int perm);
-void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t, uint32_t, uint32_t);
+void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t, uint32_t);
 static void offload_process_page_request(void);
 static void offload_process_page_content(void);
 static void offload_send_page_content(target_ulong page_addr, uint32_t perm,int);
@@ -74,7 +74,7 @@ static void offload_process_page_perm(void);
 void offload_server_start(void);
 void* offload_center_server_start(void*);
 static void offload_server_process_futex_wake_result(void);
-void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
+void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t);
 void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
 extern void offload_server_qemu_init(void);
 extern void offload_server_extra_init(void);
