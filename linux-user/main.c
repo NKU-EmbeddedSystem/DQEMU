@@ -54,6 +54,7 @@ typedef struct gst_thrd_info_t{
     int server_idx;
     int thread_idx;
 } gst_thrd_info_t;
+int cas_count = 0;
 
 extern __thread int offload_mode; /* 1: server, 2: client  3: exec*/
 extern void exec_func(void);
@@ -874,9 +875,11 @@ void offload_server_extra_init(void)
 /* To manipulate guest thread's server. 
  * Short for guest thread place*/
 #define GUEST_THREAD_MAX 128
-int gst_thrd_plc[GUEST_THREAD_MAX] = {0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+int gst_thrd_plc[GUEST_THREAD_MAX] = {1,1,1,1,2,2,2,2,3,3,3,3,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
             //{0};
+            //{0,1,2,3,4,5,6,7,8,9,10,11};
 gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
+int max_server_in_use;
 
 pthread_t center_server_thread;
 extern void offload_client_pmd_init(void);
@@ -916,6 +919,7 @@ int main(int argc, char **argv, char **envp)
         int server_idx = 0;
         for (int i = 0; i < GUEST_THREAD_MAX; i++) {
             server_idx = gst_thrd_plc[i];
+            max_server_in_use = (server_idx > max_server_in_use) ? server_idx : max_server_in_use;
             gst_thrd_info[i].server_idx = server_idx;
             gst_thrd_info[i].thread_idx = server_thread_count[server_idx]++;
             fprintf(stderr, "Thread %d --> [%d->%d]\n", 
@@ -1156,6 +1160,10 @@ int main(int argc, char **argv, char **envp)
     thread_env = env;
     if (offload_mode == 2) {
 
+        if (!parallel_cpus) {
+            parallel_cpus = true;
+            tb_flush(cpu);
+        }
         fprintf(stderr, "offload client mode\n");
         
         fprintf(stderr, "size: %x, mask: %x\n", qemu_host_page_size, qemu_host_page_mask);
@@ -1180,8 +1188,8 @@ int main(int argc, char **argv, char **envp)
         pthread_mutex_lock(&offload_center_init_mutex);
         pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
         pthread_mutex_unlock(&offload_center_init_mutex);
-        fprintf(stderr, "Connecting online server\n");
-        for (int i = 1; i < 3; i++) {
+        fprintf(stderr, "Connecting online server from 1 to %d\n", max_server_in_use -1);
+        for (int i = 1; i <= max_server_in_use; i++) {
             extern void offload_connect_online_server(int idx);
             offload_connect_online_server(i);
         

@@ -1153,7 +1153,7 @@ static inline void replace_false_sharing_addr(TCGv_i32 addr)
     //tcg_temp_free(offset);
     //tcg_temp_free(base);
     //tcg_gen_print_aa32_addr(addr);
-    gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
+    //gen_helper_dqemu_replace_false_sharing_addr(addr, addr);
     //tcg_gen_print_aa32_addr(addr);
 }
 
@@ -1182,6 +1182,7 @@ static void gen_aa32_ld_i32(DisasContext *s, TCGv_i32 val, TCGv_i32 a32,
 
     addr = gen_aa32_addr(s, a32, opc);
     //tcg_gen_print_aa32_addr(addr);
+    //tcg_gen_print_aa32_addr(val);
     tcg_gen_qemu_ld_i32(val, addr, index, opc);
     tcg_temp_free(addr);
 }
@@ -1198,6 +1199,7 @@ static void gen_aa32_st_i32(DisasContext *s, TCGv_i32 val, TCGv_i32 a32,
 
     addr = gen_aa32_addr(s, a32, opc);
     //tcg_gen_print_aa32_addr(addr);
+    //tcg_gen_print_aa32_addr(val);
     tcg_gen_qemu_st_i32(val, addr, index, opc);
     tcg_temp_free(addr);
 }
@@ -8326,8 +8328,8 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
                                TCGv_i32 addr, int size)
 {
 
-    fprintf(stderr, "gen_load_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
-    tcg_gen_ldex(addr);
+    //fprintf(stderr, "gen_load_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
+    //tcg_gen_ldex(addr);
     TCGv_i32 tmp = tcg_temp_new_i32();
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
 
@@ -8378,7 +8380,7 @@ static void gen_clrex(DisasContext *s)
 static void gen_store_exclusive(DisasContext *s, int rd, int rt, int rt2,
                                 TCGv_i32 addr, int size)
 {
-    fprintf(stderr, "gen_store_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
+    //fprintf(stderr, "gen_store_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
     TCGv_i32 t0, t1, t2;
     TCGv_i64 extaddr;
     TCGv taddr;

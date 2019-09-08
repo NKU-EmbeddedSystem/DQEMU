@@ -1454,9 +1454,13 @@ void HELPER(offload_cmpxchg_prelude)(uint32_t addr, uint32_t newv, uint32_t cmpv
 {
     //fprintf(stderr, "helper_offload_cmpxchg_prelude#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
     //if (offload_server_idx != 0)
-    //    offload_segfault_handler_positive(addr, 2);
+        //offload_segfault_handler_positive(addr, 2);
+        extern int cas_count;
+        cas_count++;
+        
+        fprintf(stderr, "helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
     //if (offload_server_idx!=0)
-        offload_server_send_cmpxchg_start(addr, cmpv, newv);
+        //offload_server_send_cmpxchg_start(addr, cmpv, newv);
 }
 
 void HELPER(offload_cmpxchg_epilogue)(uint32_t addr, uint32_t newv, uint32_t cmpv)
@@ -1490,12 +1494,12 @@ int fs_new[5];
 
 void HELPER(print_aa32_addr)(uint32_t addr)
 {
-    if (!fs_flag) {
-        return;
-    }
-    //extern int offload_server_idx;
-    //if (offload_server_idx > 0)
-    //fprintf(stderr, "[print_aa32_addr]\taa32 addr = %x\n", addr);
+    //if (!fs_flag) {
+    //    return;
+    //}
+    extern int offload_server_idx;
+    if (offload_server_idx > 0)
+    fprintf(stderr, "[print_aa32_addr]\taa32 addr = %x\n", addr);
 }
 
 typedef struct PageMapDesc_server {

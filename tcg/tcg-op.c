@@ -2825,7 +2825,7 @@ static void * const table_cmpxchg[16] = {
 
 void tcg_gen_ldex(TCGv addr)
 {
-    //gen_helper_offload_load_exclusive((uint32_t)addr);
+    gen_helper_offload_load_exclusive((uint32_t)addr);
 }
 void tcg_gen_print_aa32_addr(TCGv_i32 addr)
 {
@@ -2838,13 +2838,13 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
 
 	// Q1: is TCGv a uint32 ? or a pointer to one.
 	// Q2: is content of TCGv plain ?
-    fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32] retv: %d, addr:%p, cmpv: %d, newv: %d, idx: %d, memop: %u\n", retv, (uint32_t)addr, cmpv, newv, idx, memop);
-    gen_helper_offload_cmpxchg_prelude((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
   //  gen_helper_offload_cpu_exclusive_insight((uint32_t)cpu_exclusive_val, (uint32_t)cpu_exclusive_addr);
 
     memop = tcg_canonicalize_memop(memop, 0, 0);
     
     if (!(tcg_ctx->tb_cflags & CF_PARALLEL)) {
+    fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32] retv: %d, addr:%p, cmpv: %d, newv: %d, idx: %d, memop: %u\n", retv, (uint32_t)addr, cmpv, newv, idx, memop);
+    gen_helper_offload_cmpxchg_prelude((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
         fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32]\tDEBUG1\n");
         TCGv_i32 t1 = tcg_temp_new_i32();
         TCGv_i32 t2 = tcg_temp_new_i32();

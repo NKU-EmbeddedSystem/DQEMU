@@ -919,8 +919,11 @@ void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 {
+#define PF_TIME
+#ifdef PF_TIME
 	struct timeb t, tend;
     ftime(&t);
+#endif
     siginfo_t *info = pinfo;
     ucontext_t *uc = (ucontext_t *)puc;
     void* host_addr = info->si_addr;
@@ -929,7 +932,21 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
     unsigned long  guest_addr = h2g(host_addr);
 	fprintf(stderr, "[offload_segfault_handler]\tguest addr is %p, host_addr is %lp, pte-0 %p, pte-1 %p, pte-2 %p, VP-2 %p, VP-1%p\n", 
 			guest_addr, host_addr, pt_index(host_addr, 0), pt_index(host_addr, 1), pt_index(host_addr, 2), pt_index(VPTPTR, 2), pt_index(VPTPTR, 1));
+#define PC_sig(context)       ((context)->uc_mcontext.gregs[REG_RIP])
+	fprintf(stderr, "[offload_segfault_handler]\tREG_RIP=%p\n",
+					PC_sig(uc));
+#define UC_REG(context, reg)	((context)->uc_mcontext.gregs[reg])
+	/* REG_10 stores the load/store address. 
+	 * which is REG_RBP
+	 * REG_11 stores the load/store value, which is REG_RBX.
+	 */
+	//UC_REG(uc, 10) = 0x1000;
+	//UC_REG(uc, REG_RIP) = 
+	//for (int i = 0; i < __NGREG; i++) {
+	//	fprintf(stderr, "[offload_segfault_handler]\tREG_%d=%p\n",
+	//					i, UC_REG(uc, i));
 
+	//}
 	target_ulong page_addr = guest_addr & TARGET_PAGE_MASK;
     //fprintf(stderr, "\nHost instruction address is %p\n", uc->uc_mcontext.gregs[REG_RIP]);
     int is_write = ((uc->uc_mcontext.gregs[REG_ERR] & 0x2) != 0);
@@ -941,12 +958,14 @@ int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 	//get_client_page(is_write, guest_page);
 	// send page request, sleep until content is sent back.
 	//fprintf(stderr, "[offload_segfault_handler]\t%p value is %p\n", guest_addr, *(uint32_t*)(g2h(guest_addr)));
+#ifdef PF_TIME
 	ftime(&tend);
 	int secDiff = tend.time - t.time;
 	secDiff *= 1000;
 	secDiff += (tend.millitm - t.millitm);
 	pgfault_time_sum += secDiff;
 	fprintf(stderr, "[offload_segfault_handler]\tbegin: %d:%d; end: %d:%d, used: %dms, now total is: %dms", t.time, t.millitm, tend.time, tend.millitm, secDiff, pgfault_time_sum);
+#endif
 
     return 1;
 }
@@ -1317,6 +1336,7 @@ static void offload_server_send_futex_wait_request(target_ulong guest_addr, int 
 	//page_recv_flag = 0;
 	//offload_server_send_futex_wait_request(guest_addr, op, val, timeout, uaddr2, val3);
 	fprintf(stderr, "[offload_server_futex_wait]\t[*(uint32_t*)g2h(guest_addr) %d ！= val %d, sleeping...]\n", *(uint32_t*)g2h(guest_addr), val);
+	exit(222);
 	pthread_mutex_lock(&futex_mutex);
 	futex_uaddr_changed_flag = 0;
 	while (futex_uaddr_changed_flag == 0)
@@ -1402,6 +1422,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	struct tcp_msg_header *tcp_header = (struct tcp_msg_header *) buf;
 	fill_tcp_header(tcp_header, pp - buf - sizeof(struct tcp_msg_header), TAG_OFFLOAD_SYSCALL_REQ);
 
+	pthread_mutex_lock(&syscall_recv_mutex[offload_thread_idx]);
 	int res = autoSend(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
@@ -1410,7 +1431,6 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	}
 	fprintf(stderr, "[pass_syscall]\tpassed syscall, waiting...%d->%d\n", offload_server_idx, offload_thread_idx);
 	syscall_ready_flag[offload_thread_idx] = 0;
-	pthread_mutex_lock(&syscall_recv_mutex[offload_thread_idx]);
 	while (syscall_ready_flag[offload_thread_idx] == 0)
 	{
 		pthread_cond_wait(&syscall_recv_cond[offload_thread_idx], &syscall_recv_mutex[offload_thread_idx]);
@@ -1439,7 +1459,7 @@ static void offload_server_process_syscall_result(void)
 	int thread_id = (*(int*)p);
 	p += sizeof(int);
 	result_global[thread_id] = result;
-	fprintf(stderr, "[offload_server_process_syscall_result]\tgot syscall ret = %p, waking up thread\n", result);
+	fprintf(stderr, "[offload_server_process_syscall_result]\tgot syscall ret = %p, waking up thread%d\n", result, thread_id);
 	pthread_mutex_lock(&syscall_recv_mutex[thread_id]);
 	syscall_ready_flag[thread_id] = 1;
 	pthread_cond_signal(&syscall_recv_cond[thread_id]);

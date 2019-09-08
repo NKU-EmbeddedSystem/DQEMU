@@ -1805,6 +1805,7 @@ void syscall_daemonize(void)
 	do_syscall_flag = 0;
 	syscall_global_pointer = NULL;
 	pthread_mutex_unlock(&do_syscall_mutex);
+	syscall_started_flag = 1;
 	while (1)
 	{
 
@@ -2031,7 +2032,6 @@ int offload_client_start(CPUArchState *the_env)
 
 void offload_syscall_daemonize_start(CPUArchState *the_env)
 {
-	syscall_started_flag = 1;
 	offload_mode = 4;
 	pthread_mutex_lock(&offload_count_mutex);
 	if (is_first_do_syscall_thread == 0)

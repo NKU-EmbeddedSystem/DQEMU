@@ -9064,6 +9064,8 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         //rcu_unregister_thread();
         //pthread_exit(NULL);
 
+    extern int cas_count;
+    fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
 
         extern void cpu_exit_signal(void);
         cpu_exit_signal();
@@ -11185,6 +11187,8 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         /* new thread calls */
     case TARGET_NR_exit_group:
         preexit_cleanup(cpu_env, arg1);
+    extern int cas_count;
+    fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
         ret = get_errno(exit_group(arg1));
         break;
 #endif
@@ -13180,6 +13184,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         extern int syscall_started_flag;
         extern __thread int offload_mode;
         extern int offload_server_idx;
+        //while (syscall_started_flag!=1) {
+        //    sched_yield();
+        //}
         if ((offload_mode == 3) && (offload_server_idx == 0) && (syscall_started_flag == 1))
         {
             //TODO
