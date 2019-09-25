@@ -7359,17 +7359,17 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         }
 
 
-        offload_log(stderr, "[do_fork]\tpthread_create\n");
+        fprintf(stderr, "[do_fork]\tpthread_create\n");
         ret = pthread_create(&info.thread, &attr, clone_func, &info);
         /* TODO: Free new CPU state if thread creation failed.  */
-        offload_log(stderr, "[do_fork]\tpthread_create res: %d\n", ret);
+        fprintf(stderr, "[do_fork]\tpthread_create res: %d\n", ret);
         if (is_first)
         {
             pthread_t syscall_init;
             ret = pthread_create(&syscall_init, &attr, clone_func_syscall, 
                                 &info);
             //pthread_join(syscall_init, NULL);
-            offload_log(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
+            fprintf(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
             is_first = 0;
         }
         else {
@@ -7378,18 +7378,18 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             // pthread_cond_broadcast(&syscall_clone_cond);
             // pthread_mutex_unlock(&syscall_clone_mutex);
         }
-        offload_log(stderr, "[do_fork]\tSET mask NULL\n");
+        fprintf(stderr, "[do_fork]\tSET mask NULL\n");
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
-        offload_log(stderr, "[do_fork]\tDestroy attr\n");
+        fprintf(stderr, "[do_fork]\tDestroy attr\n");
         pthread_attr_destroy(&attr);
         
         if (ret == 0) {
-            offload_log(stderr, "[do_fork]\tWait for the child to initialize.\n");
+            fprintf(stderr, "[do_fork]\tWait for the child to initialize.\n");
             /* Wait for the child to initialize.  */
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
         } else {
-            offload_log(stderr, "[do_fork]\tErr! ret = %d\n", ret);
+            fprintf(stderr, "[do_fork]\tErr! ret = %d\n", ret);
             ret = -1;
         }
         pthread_mutex_unlock(&info.mutex);
@@ -7399,7 +7399,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
 		//pthread_mutex_lock(&clone_syscall_mutex);
         //extern int testint;
         //pthread_cond_wait()
-		offload_log(stderr, "[do_fork]\pthread_create finished\n");
+		fprintf(stderr, "[do_fork]\pthread_create finished\n");
     } else 
     {
         /* if no CLONE_VM, we consider it is a fork */
@@ -7441,7 +7441,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             fork_end(0);
         }
     }
-    offload_log(stderr, "[do_fork]\pthread_create finished, returning\n");
+    fprintf(stderr, "[do_fork]\pthread_create finished, returning\n");
     return ret;
 }
 
@@ -9066,16 +9066,20 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 
     extern int cas_count;
     fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
+    extern int ldex_count;
+    extern int stex_count;
+    fprintf(stderr, "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count / (double)ldex_count);
 
-        extern void cpu_exit_signal(void);
-        cpu_exit_signal();
-        //fprintf(stderr,"CAN U SEE ME?\n");
-        pthread_exit(0);
-        while (1)
-            ;
-        return NULL;
-        ret = 0; /* avoid warning */
-        break;
+    extern void
+    cpu_exit_signal(void);
+    cpu_exit_signal();
+    //fprintf(stderr,"CAN U SEE ME?\n");
+    pthread_exit(0);
+    while (1)
+        ;
+    return NULL;
+    ret = 0; /* avoid warning */
+    break;
     case TARGET_NR_read:
         if (arg3 == 0)
             ret = 0;
@@ -11189,6 +11193,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         preexit_cleanup(cpu_env, arg1);
     extern int cas_count;
     fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
+    extern int ldex_count;
+    extern int stex_count;
+    fprintf(stderr, "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count/(double)ldex_count);
         ret = get_errno(exit_group(arg1));
         break;
 #endif

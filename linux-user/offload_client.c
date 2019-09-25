@@ -214,7 +214,7 @@ static void show_prefetch_list(int idx);
 #include "offload_common.h"
 
 
-#define fprintf offload_log
+
 
 //#define MUTEX_LIST_MAX 32
 #define FUTEX_RECORD_MAX 16
@@ -783,7 +783,7 @@ static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 	PageMapDesc *pmd = get_pmd(addr);
 	/* pmd->owner_set_mutex must be locked before. */
 	pmd->mutex_holder = requestor_idx;
-	//offload_log(stderr, "[fetch_page_func]\tpending lock succeed, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_holder, perm, &pmd->owner_set_mutex);
+	//fprintf(stderr, "[fetch_page_func]\tpending lock succeed, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_holder, perm, &pmd->owner_set_mutex);
 	pmd->requestor = requestor_idx;
 	print_holder(page_addr);
 	if (perm == 2)
@@ -809,13 +809,13 @@ static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 	{
 		if (pmd->owner_set.size == 0)
 		{
-			offload_log(stderr, "[fetch_page_func]\terror: no one has the page\n");
+			fprintf(stderr, "[fetch_page_func]\terror: no one has the page\n");
 			exit(-1);
 		}
 		/* check if it already has the page */
 		if ((find(&(pmd->owner_set), requestor_idx) >= 0)) {
 			/* do nothing */
-			offload_log(stderr, "[fetch_page_func]\terror: It alreay has. returning...\n");
+			fprintf(stderr, "[fetch_page_func]\terror: It alreay has. returning...\n");
 
 			return -3;
 		}
@@ -831,7 +831,7 @@ static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 	}
 	else {
 
-		offload_log(stderr, "[fetch_page_func]\terror: EINVAL\n");
+		fprintf(stderr, "[fetch_page_func]\terror: EINVAL\n");
 		exit(222);
 	}
 	fprintf(stderr, "[fetch_page_func]\t sent\n");
@@ -856,7 +856,7 @@ static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 // 	pthread_mutex_lock(&pmd->owner_set_mutex);
 // 	/* trylock succeed, fetching page */
 // 	pmd->mutex_holder = requestor_idx;
-// 	offload_log(stderr, "[offload_client_fetch_page_thread]\tpending lock succeed, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_holder, perm, &pmd->owner_set_mutex);
+// 	fprintf(stderr, "[offload_client_fetch_page_thread]\tpending lock succeed, holder: %d, perm: %d, mutex:%p\n", pmd->mutex_holder, perm, &pmd->owner_set_mutex);
 
 // 	pmd->requestor = requestor_idx;
 // 	print_holder(page_addr);
@@ -886,7 +886,7 @@ static int fetch_page_func(int requestor_idx, target_ulong addr, int perm)
 // 	{
 // 		if (pmd->owner_set.size == 0)
 // 		{
-// 			offload_log(stderr, "[offload_client_fetch_page_thread]\terror: no one has the page\n");
+// 			fprintf(stderr, "[offload_client_fetch_page_thread]\terror: no one has the page\n");
 // 			exit(-1);
 // 		}
 // 		/* revoke page as shared page */
@@ -975,7 +975,7 @@ static int process_pmd(uint32_t page_addr)
 static int offload_client_fetch_page(int requestor_idx, uint32_t addr, int perm)
 {
 
-	offload_log(stderr, "[offload_client_fetch_page]\tadding to list page address %p, perm %d\n", addr, perm);
+	fprintf(stderr, "[offload_client_fetch_page]\tadding to list page address %p, perm %d\n", addr, perm);
 	/* get the PageMapDesc pointer */
 	PageMapDesc *pmd = get_pmd(addr);
 	req_node *pnode = pmd->list_head.next;
@@ -1002,7 +1002,7 @@ static int offload_client_fetch_page(int requestor_idx, uint32_t addr, int perm)
 	// param->perm = perm;
 	// pthread_t pender;
 	// pthread_create(&pender, NULL, offload_client_fetch_page_thread, param);
-	// offload_log(stderr, "[offload_client_fetch_page]\tthread created.id:%d, addr:%p, perm:%d sent\n", requestor_idx, addr, perm);
+	// fprintf(stderr, "[offload_client_fetch_page]\tthread created.id:%d, addr:%p, perm:%d sent\n", requestor_idx, addr, perm);
 	return 0;
 }
 
@@ -2272,7 +2272,7 @@ static void offload_process_page_ack(void)
 	fprintf(stderr, "[offload_process_page_ack]\tunlocking...%p\n", &pmd->owner_set_mutex);
 	pthread_mutex_unlock(&pmd->owner_set_mutex);
 
-	offload_log(stderr, "[offload_process_page_ack]\tpage %x, unlock\n", page_addr);
+	fprintf(stderr, "[offload_process_page_ack]\tpage %x, unlock\n", page_addr);
 	print_holder(page_addr);
 	process_pmd(page_addr);
 }

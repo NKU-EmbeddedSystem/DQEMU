@@ -1302,7 +1302,7 @@ static void offload_server_send_futex_wait_request(target_ulong guest_addr, int 
 	
 	*((int *) p) = op;
 	p += sizeof(int);
-	offload_log(stderr, "futex op: %d\n", op);
+	fprintf(stderr, "futex op: %d\n", op);
 	*((int *) p) = val;
 	p += sizeof(int);
 	

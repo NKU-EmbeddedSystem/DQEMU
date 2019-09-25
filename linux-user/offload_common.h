@@ -12,6 +12,12 @@
 #define MAX_OFFLOAD_NUM 100
 
 #define IDX_CLIENT 0
+#define DQEMU_DEBUG
+#ifdef DQEMU_DEBUG
+#define fprintf offload_log
+#else
+#define fprintf(...) ;//offload_log
+#endif /* DQEMU_DEBU */
 extern __thread char *p;
 extern int g_false_sharing_flag;
 int client_port_of(int idx);

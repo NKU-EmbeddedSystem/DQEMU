@@ -35,6 +35,12 @@
 #endif
 #include "sysemu/cpus.h"
 #include "sysemu/replay.h"
+#define DQEMU_DEBUG
+#ifdef DQEMU_DEBUG
+#define fprintf offload_log
+#else
+#define fprintf(...) ;//offload_log
+#endif /* DQEMU_DEBUG */
 
 /* -icount align implementation. */
 
@@ -730,8 +736,8 @@ int cpu_exec(CPUState *cpu)
             }
 
             tb = tb_find(cpu, last_tb, tb_exit, cflags);
-			//extern void offload_log(FILE*, const char*, ...);
-			offload_log(stderr, "exec code from %x to %x\n", tb->pc, tb->pc + tb->size);
+			//extern void fprintf(FILE*, const char*, ...);
+			fprintf(stderr, "exec code from %x to %x\n", tb->pc, tb->pc + tb->size);
 
 #if 0
             // Debug 

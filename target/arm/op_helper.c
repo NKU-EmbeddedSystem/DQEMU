@@ -1470,14 +1470,26 @@ void HELPER(offload_cmpxchg_epilogue)(uint32_t addr, uint32_t newv, uint32_t cmp
         offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
 }
 
-void HELPER(offload_load_exclusive)(uint32_t addr)
+void HELPER(offload_load_exclusive)(uint32_t addr, uint32_t val)
 {
-    //fprintf(stderr, "helper_offload_load_exclusive\taddr %p\n", addr);
+    fprintf(stderr, "helper_offload_load_exclusive\taddr %p, val %d = %p\n", addr, val, val);
+    assert(0 == 1);
     //int t = *(uint32_t *)(g2h(addr));
     //fprintf(stderr, "helper_offload_load_exclusive\tval %x\n", t);
     //offload_segfault_handler_positive(addr, 2);
     //*(uint32_t *)(g2h(addr)) = t;
     //fprintf(stderr, "helper_offload_load_exclusive\taddr:%p\n", addr);
+}
+void HELPER(offload_load_exclusive_count)(uint32_t addr)
+{
+    extern int ldex_count;
+    ldex_count++;
+    fprintf(stderr, "helper_offload_load_exclusive\taddr %p\n", addr);
+}
+void HELPER(offload_store_exclusive_count)(uint32_t addr)
+{
+    extern int stex_count;
+    stex_count++;
 }
 void HELPER(offload_cpu_exclusive_insight)(uint32_t val, uint32_t addr)
 {

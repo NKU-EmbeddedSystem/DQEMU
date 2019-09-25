@@ -43,7 +43,6 @@ extern int offload_server_idx;
 static char net_buffer[NET_BUFFER_SIZE];
 static pthread_mutex_t socket_mutex;
 #define BUFFER_PAYLOAD_P (net_buffer + TCP_HEADER_SIZE)
-#define fprintf offload_log
 extern CPUArchState *env;
 uint32_t stack_end, stack_start;
 extern pthread_mutex_t cmpxchg_mutex;

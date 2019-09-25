@@ -55,6 +55,8 @@ typedef struct gst_thrd_info_t{
     int thread_idx;
 } gst_thrd_info_t;
 int cas_count = 0;
+int ldex_count = 0;
+int stex_count = 0;
 
 extern __thread int offload_mode; /* 1: server, 2: client  3: exec*/
 extern void exec_func(void);
@@ -875,8 +877,8 @@ void offload_server_extra_init(void)
 /* To manipulate guest thread's server. 
  * Short for guest thread place*/
 #define GUEST_THREAD_MAX 128
-int gst_thrd_plc[GUEST_THREAD_MAX] = {1,1,1,1,2,2,2,2,3,3,3,3,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
-            //{0};
+int gst_thrd_plc[GUEST_THREAD_MAX] = //{0,0,1,1,2,2,3,3,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+            {0};
             //{0,1,2,3,4,5,6,7,8,9,10,11};
 gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
 int max_server_in_use;

@@ -2823,9 +2823,17 @@ static void * const table_cmpxchg[16] = {
     WITH_ATOMIC64([MO_64 | MO_BE] = gen_helper_atomic_cmpxchgq_be)
 };
 
-void tcg_gen_ldex(TCGv addr)
+void tcg_gen_ldex(TCGv addr, TCGv_i32 val)
 {
-    gen_helper_offload_load_exclusive((uint32_t)addr);
+    gen_helper_offload_load_exclusive((uint32_t)addr, (uint32_t)val);
+}
+void tcg_gen_ldex_count(TCGv addr)
+{
+    gen_helper_offload_load_exclusive_count((uint32_t)addr);
+}
+void tcg_gen_stex_count(TCGv addr)
+{
+    gen_helper_offload_store_exclusive_count((uint32_t)addr);
 }
 void tcg_gen_print_aa32_addr(TCGv_i32 addr)
 {

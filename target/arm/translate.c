@@ -8329,11 +8329,17 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
 {
 
     //fprintf(stderr, "gen_load_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
-    //tcg_gen_ldex(addr);
     TCGv_i32 tmp = tcg_temp_new_i32();
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
+    /*
+    TCGLabel *done_label;
+    TCGLabel *fail_label;
+    fail_label = gen_new_label();
+    done_label = gen_new_label();
+    */
 
     s->is_ldex = true;
+    tcg_gen_ldex_count(addr);
 
     if (size == 3) {
         TCGv_i32 tmp2 = tcg_temp_new_i32();
@@ -8370,6 +8376,16 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
 
     store_reg(s, rt, tmp);
     tcg_gen_extu_i32_i64(cpu_exclusive_addr, addr);
+    /*
+    tmp = load_reg(s, rt);
+    tcg_gen_brcondi_i32(TCG_COND_LT, tmp, 0x1000, done_label);
+
+    gen_set_label(fail_label);
+    tmp = load_reg(s, rt);
+    tcg_gen_ldex(addr, tmp);
+    tcg_temp_free_i32(tmp);
+    gen_set_label(done_label);
+    */
 }
 
 static void gen_clrex(DisasContext *s)
@@ -8388,6 +8404,7 @@ static void gen_store_exclusive(DisasContext *s, int rd, int rt, int rt2,
     TCGLabel *fail_label;
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
 
+    tcg_gen_stex_count(addr);
     /* if (env->exclusive_addr == addr && env->exclusive_val == [addr]) {
          [addr] = {Rt};
          {Rd} = 0;
