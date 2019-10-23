@@ -1480,16 +1480,21 @@ void HELPER(offload_load_exclusive)(uint32_t addr, uint32_t val)
     //*(uint32_t *)(g2h(addr)) = t;
     //fprintf(stderr, "helper_offload_load_exclusive\taddr:%p\n", addr);
 }
+extern void start_exclusive();
+extern void end_exclusive();
 void HELPER(offload_load_exclusive_count)(uint32_t addr)
 {
     extern int ldex_count;
     ldex_count++;
-    fprintf(stderr, "helper_offload_load_exclusive\taddr %p\n", addr);
+    //fprintf(stderr, "helper_offload_load_exclusive\taddr %p, value %p\n", addr, *(int*)(g2h(addr)));
+    
 }
 void HELPER(offload_store_exclusive_count)(uint32_t addr)
 {
+    //start_exclusive();
     extern int stex_count;
     stex_count++;
+    //end_exclusive();
 }
 void HELPER(offload_cpu_exclusive_insight)(uint32_t val, uint32_t addr)
 {

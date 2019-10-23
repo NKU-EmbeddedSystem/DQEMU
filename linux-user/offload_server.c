@@ -125,6 +125,10 @@ static void offload_server_init(void)
 	offload_server_pmd_init();
 	pthread_mutex_init(&page_process_mutex, NULL);
 
+	uint32_t ret = target_mmap(0xa0000000, 
+						0x10000000, PROT_READ|PROT_WRITE,
+						MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	assert(ret == 0xa0000000);
 }
 
 static void load_cpu(void)

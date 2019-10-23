@@ -50,6 +50,7 @@
 #define ENABLE_ARCH_8     arm_dc_feature(s, ARM_FEATURE_V8)
 
 #define ARCH(x) do { if (!ENABLE_ARCH_##x) goto illegal_op; } while(0)
+#define HASH_LLSC
 
 #include "translate.h"
 
@@ -1196,8 +1197,31 @@ static void gen_aa32_st_i32(DisasContext *s, TCGv_i32 val, TCGv_i32 a32,
         !arm_dc_feature(s, ARM_FEATURE_M_MAIN)) {
         opc |= MO_ALIGN;
     }
-
     addr = gen_aa32_addr(s, a32, opc);
+#ifdef HASH_LLSC
+    //llsc hash
+    TCGv_i32 mask1 = tcg_const_i32(0x0fffffff);
+    TCGv_i32 mask2 = tcg_const_i32(0xa0000000);
+    TCGv_i32 hash_addr = tcg_temp_new_i32();
+    TCGv_i32 fake_tid = tcg_const_i32(0x123);
+
+    //tcg_gen_ldex_count(addr);
+    //tcg_gen_ldex_count(addr);
+    //hash method
+    tcg_gen_and_i32(hash_addr, addr, mask1);
+    tcg_gen_or_i32(hash_addr, hash_addr, mask2);
+    //tcg_gen_ldex_count(hash_addr);
+    tcg_gen_qemu_st_i32(fake_tid, hash_addr, index, opc);
+    //tcg_gen_ldex_count(hash_addr);
+    tcg_temp_free(mask1);
+    tcg_temp_free(mask2);
+    tcg_temp_free(hash_addr);
+    tcg_temp_free(fake_tid);
+    //llsc end
+#endif
+
+
+
     //tcg_gen_print_aa32_addr(addr);
     //tcg_gen_print_aa32_addr(val);
     tcg_gen_qemu_st_i32(val, addr, index, opc);
@@ -8328,9 +8352,18 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
                                TCGv_i32 addr, int size)
 {
 
-    //fprintf(stderr, "gen_load_exclusive, size: %d, addr %p cpu_exclusive_val %p = %p\n", size, addr, &cpu_exclusive_val, cpu_exclusive_val);
+    fprintf(stderr, "gen_load_exclusive pc=%p, size: %d, addr %p cpu_exclusive_val %p = %p\n", s->pc, size, addr, &cpu_exclusive_val, cpu_exclusive_val);
     TCGv_i32 tmp = tcg_temp_new_i32();
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
+    // hash method
+#ifdef HASH_LLSC
+
+    TCGv_i32 mask1 = tcg_const_i32(0x0fffffff);
+    TCGv_i32 mask2 = tcg_const_i32(0xa0000000);
+    TCGv_i32 hash_addr = tcg_temp_new_i32();
+    TCGv_i32 fake_tid = tcg_const_i32(0x123);
+#endif
+
     /*
     TCGLabel *done_label;
     TCGLabel *fail_label;
@@ -8339,7 +8372,20 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
     */
 
     s->is_ldex = true;
-    tcg_gen_ldex_count(addr);
+#ifdef HASH_LLSC
+    //tcg_gen_ldex_count(addr);
+    //hash method
+    tcg_gen_and_i32(hash_addr, addr, mask1);
+    tcg_gen_or_i32(hash_addr, hash_addr, mask2);
+    //tcg_gen_ldex_count(hash_addr);
+    gen_aa32_st32(s, fake_tid, hash_addr, get_mem_index(s));
+    tcg_temp_free(mask1);
+    tcg_temp_free(mask2);
+    tcg_temp_free(hash_addr);
+    tcg_temp_free(fake_tid);
+#endif
+
+    //gen_aa32_st32(s, fake_tid, hash_addr, get_mem_index(s));
 
     if (size == 3) {
         TCGv_i32 tmp2 = tcg_temp_new_i32();
@@ -8376,6 +8422,7 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
 
     store_reg(s, rt, tmp);
     tcg_gen_extu_i32_i64(cpu_exclusive_addr, addr);
+    // To check if it is a mem addr
     /*
     tmp = load_reg(s, rt);
     tcg_gen_brcondi_i32(TCG_COND_LT, tmp, 0x1000, done_label);
