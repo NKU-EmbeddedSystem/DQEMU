@@ -11,6 +11,20 @@
 #define PREFETCH_BEGIN_PAGE_COUNT 10
 #define ONLINE_SERVER 2
 
+/* Opcode for Futex syscall - FUTEX_WAKE_OP */
+// futex_wake_op_op
+#define FUTEX_OP_SET 0
+#define FUTEX_OP_ADD 1
+#define FUTEX_OP_OR 2
+#define FUTEX_OP_ANDN 3
+#define FUTEX_OP_XOR 4
+// futex_wake_op_cmp
+#define FUTEX_OP_CMP_EQ 0
+#define FUTEX_OP_CMP_NE 1
+#define FUTEX_OP_CMP_LT 2
+#define FUTEX_OP_CMP_LE 3
+#define FUTEX_OP_CMP_GT 4
+#define FUTEX_OP_CMP_GE 5
 
 //#define PAGE_SEGMENT (PAGE_SIZE/MIN_PAGE_GRAIN)
 
@@ -1942,6 +1956,90 @@ void syscall_daemonize(void)
 				*(int*)g2h(futex_addr) = 0;
 			}
 			futex_table_wake(futex_addr, wakeup_num, idx, thread_id);
+		}
+		// futex_wake_op
+		else if ((num == TARGET_NR_futex) && ((arg2 == (FUTEX_PRIVATE_FLAG | FUTEX_WAKE_OP)) || (arg2 == FUTEX_WAKE_OP)))
+		{
+			//arg1 :uaddr arg3 :val arg4 :val2  arg5:addr2  arg6 : val3
+			// 等效代码
+			// int oldval = *(int *) uaddr2;
+			// *(int *) uaddr2 = oldval op oparg;
+			// futex(uaddr, FUTEX_WAKE, val, 0, 0, 0);
+			// if (oldval cmp cmparg)
+			// 	futex(uaddr2, FUTEX_WAKE, val2, 0, 0, 0);
+			void *futex_addr = arg1;
+			int val = arg3;
+			int val2 = arg4;
+			void *futex_addr2 = arg5;
+			u_int32_t op_cmp_val = arg6;
+			fprintf(stderr, "[syscall_daemonize]\treceived FUTEX_PRIVATE_FLAG|FUTEX_WAKE_OP, %p, %p, %d, arg8: %d\n", FUTEX_PRIVATE_FLAG | FUTEX_WAKE_OP, arg2, arg2 == 0x81 ? 1 : 0, arg8);
+			// 请求一个页面
+			// 等效代码
+			// int oldval = *(int *) uaddr2;
+			// *(int *) uaddr2 = oldval op oparg;
+			print_futex_table();
+			offload_segfault_handler_positive(futex_addr2, 2);
+			int oldval = *(int *)(g2h(futex_addr2));
+			int oparg = ((op_cmp_val << 8) >> 20) & 0xfff;
+			switch ((arg6 >> 28) & 0xf)
+			{
+			case FUTEX_OP_SET:
+				*(int *)(g2h(futex_addr2)) = oparg;
+				break;
+			case FUTEX_OP_ADD:
+				*(int *)(g2h(futex_addr2)) += oparg;
+				break;
+			case FUTEX_OP_OR:
+				*(int *)(g2h(futex_addr2)) |= oparg;
+				break;
+			case FUTEX_OP_ANDN:
+				*(int *)(g2h(futex_addr2)) &= ~oparg;
+				break;
+			case FUTEX_OP_XOR:
+				*(int *)(g2h(futex_addr2)) ^= oparg;
+				break;
+			default:
+				fprintf(stderr, "futex_wake_op_op error! ");
+				exit(122);
+				break;
+			}
+			futex_table_wake(futex_addr, val, idx, thread_id);
+			int cmparg = op_cmp_val & 0xfff;
+			switch (((op_cmp_val << 4) >> 28) & 0xf)
+			{
+
+			case FUTEX_OP_CMP_EQ:
+				if (oldval == cmparg)
+					futex_table_wake(futex_addr2, val2, idx, thread_id);
+				break;
+
+			case FUTEX_OP_CMP_NE:
+				if (oldval != cmparg)
+					futex_table_wake(futex_addr2, val2, idx, thread_id);
+				break;
+			case FUTEX_OP_CMP_LT:
+				if (oldval < cmparg)
+					futex_table_wake(futex_addr2, val2, idx, thread_id);
+				break;
+			case FUTEX_OP_CMP_LE:
+				if (oldval <= cmparg)
+					futex_table_wake(futex_addr2, val2, idx, thread_id);
+				break;
+			case FUTEX_OP_CMP_GT:
+				if (oldval > cmparg)
+					futex_table_wake(futex_addr2, val2, idx, thread_id);
+				break;
+			case FUTEX_OP_CMP_GE:
+				if (oldval >= cmparg)
+					futex_table_wake(futex_addr2, val2, idx, thread_id);
+				break;
+			default:
+				fprintf(stderr, "futex_wake_op_cmp error! ");
+				exit(122);
+				break;
+			}
+			fprintf(stderr, "[futex_wake_op]\tfutex_wake_op Done!\n");
+			print_futex_table();
 		}
 		/*        FUTEX_CMP_REQUEUE (since Linux 2.6.7)
 		*/
