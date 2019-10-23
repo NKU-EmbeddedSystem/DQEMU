@@ -30,13 +30,7 @@
 #define MAP_PAGE_BITS 12
 void offload_send_page_request_and_wait(uint32_t page_addr, int perm);
 void* offload_server_start_thread(void* arg);
-typedef struct PageMapDesc_server {
-	int cur_perm;
-	int is_false_sharing;
-	uint32_t shadow_page_addr;
-} PageMapDesc_server;
-PageMapDesc_server page_map_table_s[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section_server"))) __attribute__ ((aligned(4096))) = {0};
-PageMapDesc_server *get_pmd_s(uint32_t page_addr);
+
 /* Wake up main exec thread. */
 extern pthread_mutex_t main_exec_mutex;
 extern pthread_cond_t main_exec_cond;
@@ -49,7 +43,6 @@ extern int offload_server_idx;
 static char net_buffer[NET_BUFFER_SIZE];
 static pthread_mutex_t socket_mutex;
 #define BUFFER_PAYLOAD_P (net_buffer + TCP_HEADER_SIZE)
-#define fprintf offload_log
 extern CPUArchState *env;
 uint32_t stack_end, stack_start;
 extern pthread_mutex_t cmpxchg_mutex;
@@ -70,7 +63,7 @@ static void offload_server_send_futex_wait_request(target_ulong uaddr, int op, i
 int offload_server_futex_wait(target_ulong uaddr, int op, int val, target_ulong timeout, target_ulong uaddr2, int val3);
 static void offload_server_send_page_request(target_ulong page_addr, uint32_t perm);
 int offload_segfault_handler_positive(uint32_t page_addr, int perm);
-void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t, uint32_t, uint32_t);
+void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t, uint32_t);
 static void offload_process_page_request(void);
 static void offload_process_page_content(void);
 static void offload_send_page_content(target_ulong page_addr, uint32_t perm,int);
@@ -80,7 +73,7 @@ static void offload_process_page_perm(void);
 void offload_server_start(void);
 void* offload_center_server_start(void*);
 static void offload_server_process_futex_wake_result(void);
-void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
+void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t);
 void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
 extern void offload_server_qemu_init(void);
 extern void offload_server_extra_init(void);
@@ -98,5 +91,7 @@ extern void end_exclusive(void);
 static void offload_server_process_fs_page(void);
 static void offload_server_process_page_wakeup(void);
 
+PageMapDesc_server page_map_table_s[L1_MAP_TABLE_SIZE][L2_MAP_TABLE_SIZE] __attribute__ ((section (".page_table_section_server"))) __attribute__ ((aligned(4096))) = {0};
+PageMapDesc_server *get_pmd_s(uint32_t page_addr);
 
 #endif

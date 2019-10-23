@@ -12,6 +12,12 @@
 #define MAX_OFFLOAD_NUM 100
 
 #define IDX_CLIENT 0
+#define DQEMU_DEBUG
+#ifdef DQEMU_DEBUG
+#define fprintf offload_log
+#else
+#define fprintf(...) ;//offload_log
+#endif /* DQEMU_DEBU */
 extern __thread char *p;
 extern int g_false_sharing_flag;
 int client_port_of(int idx);
@@ -33,16 +39,24 @@ extern pthread_mutex_t global_counter_mutex;
 #define COMM_MAGIC_NR   0x41824182
 #define TCP_HEADER_SIZE (sizeof(struct tcp_msg_header))
 
+// TODO remove counter. useless.
 #define fill_tcp_header(__header, __size, __tag)    \
 	do {                                            \
 	(__header)->magic_nr = COMM_MAGIC_NR;       \
 	(__header)->size     = __size;              \
 	(__header)->tag      = __tag;               \
-	pthread_mutex_lock(&global_counter_mutex);	\
-	(__header)->counter      = ++global_counter;   \
-	fprintf(stderr, "SSSSSSSSSSSending package number %d\n", global_counter); \
-	pthread_mutex_unlock(&global_counter_mutex);	\
 } while (0)
+//// TODO remove counter. useless.
+//#define fill_tcp_header(__header, __size, __tag)    \
+//	do {                                            \
+//	(__header)->magic_nr = COMM_MAGIC_NR;       \
+//	(__header)->size     = __size;              \
+//	(__header)->tag      = __tag;               \
+//	pthread_mutex_lock(&global_counter_mutex);	\
+//	(__header)->counter      = ++global_counter;   \
+//	fprintf(stderr, "SSSSSSSSSSSending package number %d\n", global_counter); \
+//	pthread_mutex_unlock(&global_counter_mutex);	\
+//} while (0)
 
 
 
@@ -111,4 +125,13 @@ static uint32_t get_tag(void);
 
 #define L1_MAP_TABLE_SHIFT (VIRT_ADDR_SPACE_BITS - 12 - L1_MAP_TABLE_BITS)
 
+/* For dynamic page grain. use */
+/* PAGE_SIZE / MIN_PAGE_GRAIN = MAX_PAGE_SPLIT */
+#define MIN_PAGE_GRAIN 64
+#define MAX_PAGE_SPLIT (PAGE_SIZE / MIN_PAGE_GRAIN)
+typedef struct PageMapDesc_server {
+	int cur_perm;
+	int is_false_sharing;
+	uint32_t shadow_page_addr;
+} PageMapDesc_server;
 #endif

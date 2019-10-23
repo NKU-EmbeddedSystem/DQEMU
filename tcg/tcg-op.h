@@ -899,7 +899,9 @@ static inline void tcg_gen_qemu_st64(TCGv_i64 arg, TCGv addr, int mem_index)
 {
     tcg_gen_qemu_st_i64(arg, addr, mem_index, MO_TEQ);
 }
-void tcg_gen_ldex(TCGv);
+void tcg_gen_ldex(TCGv, TCGv_i32);
+void tcg_gen_ldex_count(TCGv);
+void tcg_gen_stex_count(TCGv);
 void tcg_gen_print_aa32_addr(TCGv_i32);
 void tcg_gen_atomic_cmpxchg_i32(TCGv_i32, TCGv, TCGv_i32, TCGv_i32,
                                 TCGArg, TCGMemOp);

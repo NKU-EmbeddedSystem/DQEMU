@@ -17,3 +17,15 @@ void clear(set_t *s)
 {
 	s->size = 0;
 }
+
+int find(set_t *s, int n)
+{
+	for (int i = 0; i < s->size; i++)
+	{
+		if (s->element[i] == n)
+		{
+			return i;
+		}
+	}
+	return -1;
+}

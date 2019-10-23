@@ -1445,7 +1445,7 @@ uint32_t HELPER(ror_cc)(CPUARMState *env, uint32_t x, uint32_t i)
 
 #include <pthread.h>
 
-extern void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t, uint32_t);
+extern void offload_server_send_cmpxchg_start(uint32_t, uint32_t, uint32_t);
 extern void offload_server_send_cmpxchg_end(uint32_t, uint32_t);
 extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
 extern int offload_server_idx;
@@ -1453,27 +1453,48 @@ pthread_mutex_t cmpxchg_mutex = PTHREAD_MUTEX_INITIALIZER;
 void HELPER(offload_cmpxchg_prelude)(uint32_t addr, uint32_t newv, uint32_t cmpv)//, uint32_t retv, uint32_t memop)
 {
     //fprintf(stderr, "helper_offload_cmpxchg_prelude#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
-    if (offload_server_idx != 0)
-        offload_segfault_handler_positive(addr, 2);
+    //if (offload_server_idx != 0)
+        //offload_segfault_handler_positive(addr, 2);
+        extern int cas_count;
+        cas_count++;
+        
+        fprintf(stderr, "helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
     //if (offload_server_idx!=0)
-    //    offload_server_send_cmpxchg_start(addr, cmpv, newv, *(uint32_t *)g2h(addr));
+        //offload_server_send_cmpxchg_start(addr, cmpv, newv);
 }
 
 void HELPER(offload_cmpxchg_epilogue)(uint32_t addr, uint32_t newv, uint32_t cmpv)
 {
     //fprintf(stderr, "helper_offload_cmpxchg_epilogue#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
     //if (offload_server_idx != 0)
-    //    offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
+        offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
 }
 
-void HELPER(offload_load_exclusive)(uint32_t addr)
+void HELPER(offload_load_exclusive)(uint32_t addr, uint32_t val)
 {
-    //fprintf(stderr, "helper_offload_load_exclusive\taddr %p\n", addr);
+    fprintf(stderr, "helper_offload_load_exclusive\taddr %p, val %d = %p\n", addr, val, val);
+    assert(0 == 1);
     //int t = *(uint32_t *)(g2h(addr));
     //fprintf(stderr, "helper_offload_load_exclusive\tval %x\n", t);
     //offload_segfault_handler_positive(addr, 2);
     //*(uint32_t *)(g2h(addr)) = t;
     //fprintf(stderr, "helper_offload_load_exclusive\taddr:%p\n", addr);
+}
+extern void start_exclusive();
+extern void end_exclusive();
+void HELPER(offload_load_exclusive_count)(uint32_t addr)
+{
+    extern int ldex_count;
+    ldex_count++;
+    //fprintf(stderr, "helper_offload_load_exclusive\taddr %p, value %p\n", addr, *(int*)(g2h(addr)));
+    
+}
+void HELPER(offload_store_exclusive_count)(uint32_t addr)
+{
+    //start_exclusive();
+    extern int stex_count;
+    stex_count++;
+    //end_exclusive();
 }
 void HELPER(offload_cpu_exclusive_insight)(uint32_t val, uint32_t addr)
 {
@@ -1490,12 +1511,12 @@ int fs_new[5];
 
 void HELPER(print_aa32_addr)(uint32_t addr)
 {
-    if (!fs_flag) {
-        return;
-    }
-    //extern int offload_server_idx;
-    //if (offload_server_idx > 0)
-    //fprintf(stderr, "[print_aa32_addr]\taa32 addr = %x\n", addr);
+    //if (!fs_flag) {
+    //    return;
+    //}
+    extern int offload_server_idx;
+    if (offload_server_idx > 0)
+    fprintf(stderr, "[print_aa32_addr]\taa32 addr = %x\n", addr);
 }
 
 typedef struct PageMapDesc_server {
@@ -1505,6 +1526,12 @@ typedef struct PageMapDesc_server {
 } PageMapDesc_server;
 extern inline PageMapDesc_server* get_pmd_s(uint32_t page_addr);
 extern int g_false_sharing_flag;
+
+/* For dynamic page grain. use */
+/* PAGE_SIZE / MIN_PAGE_GRAIN = MAX_PAGE_SPLIT */
+#define PAGE_SIZE       0x1000
+#define MIN_PAGE_GRAIN  64
+#define MAX_PAGE_SPLIT  (PAGE_SIZE / MIN_PAGE_GRAIN)
 
 uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
 {
@@ -1520,16 +1547,10 @@ uint32_t HELPER(dqemu_replace_false_sharing_addr)(uint32_t addr)
     PageMapDesc_server *pmd = get_pmd_s(page_addr);
     if (pmd->is_false_sharing) {
         newaddr = pmd->shadow_page_addr + 
-                (page_off / 64) * 0x1000 + page_off;
+                (page_off / MIN_PAGE_GRAIN) * PAGE_SIZE + page_off;
 //        fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
 //                        "page addr = %x --> new addr %p\n", 
 //                        addr, newaddr);
-    }
-    else {
-    //    fprintf(stderr, "[dqemu_replace_false_sharing_addr]\t"
-    //                    "%p pmd->is_falsesharing == %d\n", addr,
-    //                    pmd->is_false_sharing);
-
     }
     return newaddr;
 }

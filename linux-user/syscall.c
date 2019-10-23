@@ -6419,16 +6419,25 @@ static void *clone_func_syscall(void *arg)
     
     /* Signal to the clone thread that we're ready.  */
     
-    pthread_mutex_lock(&syscall_clone_mutex);
-    syscall_clone_done = 1;
-    pthread_cond_broadcast(&syscall_clone_cond);
-    pthread_mutex_unlock(&syscall_clone_mutex);
+    // !! Try to delete this
+    //pthread_mutex_lock(&syscall_clone_mutex);
+    //syscall_clone_done = 1;
+    //pthread_cond_broadcast(&syscall_clone_cond);
+    //pthread_mutex_unlock(&syscall_clone_mutex);
     
     fprintf(stderr, "[clone_func_syscall]\tpoint2.5\n");
     /* Wait until the parent has finished initializing the tls state.  */
+    // !! Try to delete this
+    //pthread_mutex_lock(&clone_lock);
+    //pthread_mutex_unlock(&clone_lock);
+    //cpu_loop(env);
+    /* Signal to the parent that we're ready.  */
+    pthread_mutex_lock(&info->mutex);
+    pthread_cond_broadcast(&info->cond);
+    pthread_mutex_unlock(&info->mutex);
+    /* Wait until the parent has finished initializing the tls state.  */
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
-    //cpu_loop(env);
     fprintf(stderr, "[clone_func_syscall]\tpoint3\n");
     offload_syscall_daemonize_start(info->env);
     /* never exits */
@@ -6471,16 +6480,16 @@ static void *clone_func(void *arg)
 
     /* Wait untill syscall thread is ready. 
      * Note: only create syscall thread once.*/
-    static int count_n = 0;
-    if (count_n == 0) {
-        pthread_mutex_lock(&syscall_clone_mutex);
-        while (syscall_clone_done == 0)
-        {
-            pthread_cond_wait(&syscall_clone_cond, &syscall_clone_mutex);
-        }
-        pthread_mutex_unlock(&syscall_clone_mutex);
-        count_n++;
-    }
+    //static int count_n = 0;
+    //if (count_n == 0) {
+    //    pthread_mutex_lock(&syscall_clone_mutex);
+    //    while (syscall_clone_done == 0)
+    //    {
+    //        pthread_cond_wait(&syscall_clone_cond, &syscall_clone_mutex);
+    //    }
+    //    pthread_mutex_unlock(&syscall_clone_mutex);
+    //    count_n++;
+    //}
     int to_exit = offload_client_start(env);
     fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
     /* Signal to the parent that we're ready.  */
@@ -6492,6 +6501,10 @@ static void *clone_func(void *arg)
     pthread_mutex_unlock(&clone_lock);
     
     if (to_exit) {
+        cpu_list_lock();
+        QTAILQ_REMOVE(&cpus, cpu, node);
+        cpu_list_unlock();
+        object_unref(OBJECT(cpu));
         pthread_exit(NULL);
     }
     offload_client_daemonize();
@@ -6901,6 +6914,144 @@ static int do_fork_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
     return ret;
 }
 
+static int do_fork_syscall(CPUArchState *env, unsigned int flags, abi_ulong newsp,
+                   abi_ulong parent_tidptr, target_ulong newtls,
+                   abi_ulong child_tidptr)
+{
+    CPUState *cpu = ENV_GET_CPU(env);
+    int ret;
+    TaskState *ts;
+    CPUState *new_cpu;
+    CPUArchState *new_env;
+    sigset_t sigmask;
+
+    flags &= ~CLONE_IGNORED_FLAGS;
+
+    /* Emulate vfork() with fork() */
+    if (flags & CLONE_VFORK)
+        flags &= ~(CLONE_VFORK | CLONE_VM);
+
+    if (flags & CLONE_VM) {
+        TaskState *parent_ts = (TaskState *)cpu->opaque;
+        new_thread_info info;
+        pthread_attr_t attr;
+
+        if (((flags & CLONE_THREAD_FLAGS) != CLONE_THREAD_FLAGS) ||
+            (flags & CLONE_INVALID_THREAD_FLAGS)) {
+            return -TARGET_EINVAL;
+        }
+
+        ts = g_new0(TaskState, 1);
+        init_task_state(ts);
+
+        /* Grab a mutex so that thread setup appears atomic.  */
+        pthread_mutex_lock(&clone_lock);
+
+        /* we create a new CPU instance. */
+        new_env = cpu_copy(env);
+        /* Init regs that differ from the parent.  */
+        cpu_clone_regs(new_env, newsp);
+        new_cpu = ENV_GET_CPU(new_env);
+        new_cpu->opaque = ts;
+        ts->bprm = parent_ts->bprm;
+        ts->info = parent_ts->info;
+        ts->signal_mask = parent_ts->signal_mask;
+
+        if (flags & CLONE_CHILD_CLEARTID) {
+            ts->child_tidptr = child_tidptr;
+        }
+
+        if (flags & CLONE_SETTLS) {
+            cpu_set_tls (new_env, newtls);
+        }
+
+        memset(&info, 0, sizeof(info));
+        pthread_mutex_init(&info.mutex, NULL);
+        pthread_mutex_lock(&info.mutex);
+        pthread_cond_init(&info.cond, NULL);
+        info.env = new_env;
+        if (flags & CLONE_CHILD_SETTID) {
+            info.child_tidptr = child_tidptr;
+        }
+        if (flags & CLONE_PARENT_SETTID) {
+            info.parent_tidptr = parent_tidptr;
+        }
+
+        ret = pthread_attr_init(&attr);
+        //ret = pthread_attr_setstacksize(&attr, NEW_STACK_SIZE);
+        ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        /* It is not safe to deliver signals until the child has finished
+           initializing, so temporarily block all signals.  */
+        sigfillset(&sigmask);
+        sigprocmask(SIG_BLOCK, &sigmask, &info.sigmask);
+
+        /* If this is our first additional thread, we need to ensure we
+         * generate code for parallel execution and flush old translations.
+         */
+        if (!parallel_cpus) {
+            parallel_cpus = true;
+            tb_flush(cpu);
+        }
+
+        ret = pthread_create(&info.thread, &attr, clone_func_syscall, &info);
+        /* TODO: Free new CPU state if thread creation failed.  */
+
+        sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
+        pthread_attr_destroy(&attr);
+        if (ret == 0) {
+            /* Wait for the child to initialize.  */
+            pthread_cond_wait(&info.cond, &info.mutex);
+            ret = info.tid;
+        } else {
+            ret = -1;
+        }
+        pthread_mutex_unlock(&info.mutex);
+        pthread_cond_destroy(&info.cond);
+        pthread_mutex_destroy(&info.mutex);
+        pthread_mutex_unlock(&clone_lock);
+    } else {
+        /* if no CLONE_VM, we consider it is a fork */
+        if (flags & CLONE_INVALID_FORK_FLAGS) {
+            return -TARGET_EINVAL;
+        }
+
+        /* We can't support custom termination signals */
+        if ((flags & CSIGNAL) != TARGET_SIGCHLD) {
+            return -TARGET_EINVAL;
+        }
+
+        if (block_signals()) {
+            return -TARGET_ERESTARTSYS;
+        }
+
+        fork_start();
+        ret = fork();
+        if (ret == 0) {
+            /* Child Process.  */
+            cpu_clone_regs(env, newsp);
+            fork_end(1);
+            /* There is a race condition here.  The parent process could
+               theoretically read the TID in the child process before the child
+               tid is set.  This would require using either ptrace
+               (not implemented) or having *_tidptr to point at a shared memory
+               mapping.  We can't repeat the spinlock hack used above because
+               the child process gets its own copy of the lock.  */
+            if (flags & CLONE_CHILD_SETTID)
+                put_user_u32(gettid(), child_tidptr);
+            if (flags & CLONE_PARENT_SETTID)
+                put_user_u32(gettid(), parent_tidptr);
+            ts = (TaskState *)cpu->opaque;
+            if (flags & CLONE_SETTLS)
+                cpu_set_tls (env, newtls);
+            if (flags & CLONE_CHILD_CLEARTID)
+                ts->child_tidptr = child_tidptr;
+        } else {
+            fork_end(0);
+        }
+    }
+    return ret;
+}
+
 
 int do_fork_server_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
@@ -7107,6 +7258,9 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
     CPUState *new_cpu;
     CPUArchState *new_env;
     sigset_t sigmask;
+    int dqemu_ret;
+    int just_create_syscall = 0;
+    static int is_first = 1;
 
     flags &= ~CLONE_IGNORED_FLAGS;
 
@@ -7122,6 +7276,12 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         fprintf(stderr, "[do_fork]\tguest thread %d : %d->%d\n",
                         thread_count, server_idx, thread_idx);
         /* Determine to create in local or offload to remote server. */
+        if (is_first) {
+            fprintf(stderr, "[do_fork]\tCreating syscall thread...\n");
+            do_fork_syscall(env, flags, newsp, parent_tidptr, 
+                                    newtls, child_tidptr);
+            is_first = 0;
+        }
         if (server_idx == 0) {
             fprintf(stderr, "[do_fork]\tFork in local...\n");
             return do_fork_local(env, flags, newsp, parent_tidptr, 
@@ -7199,18 +7359,17 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         }
 
 
-        offload_log(stderr, "[do_fork]\tpthread_create\n");
+        fprintf(stderr, "[do_fork]\tpthread_create\n");
         ret = pthread_create(&info.thread, &attr, clone_func, &info);
         /* TODO: Free new CPU state if thread creation failed.  */
-        offload_log(stderr, "[do_fork]\tpthread_create res: %d\n", ret);
-        static int is_first = 1;
+        fprintf(stderr, "[do_fork]\tpthread_create res: %d\n", ret);
         if (is_first)
         {
             pthread_t syscall_init;
             ret = pthread_create(&syscall_init, &attr, clone_func_syscall, 
                                 &info);
             //pthread_join(syscall_init, NULL);
-            offload_log(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
+            fprintf(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
             is_first = 0;
         }
         else {
@@ -7219,18 +7378,18 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             // pthread_cond_broadcast(&syscall_clone_cond);
             // pthread_mutex_unlock(&syscall_clone_mutex);
         }
-        offload_log(stderr, "[do_fork]\tSET mask NULL\n");
+        fprintf(stderr, "[do_fork]\tSET mask NULL\n");
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
-        offload_log(stderr, "[do_fork]\tDestroy attr\n");
+        fprintf(stderr, "[do_fork]\tDestroy attr\n");
         pthread_attr_destroy(&attr);
         
         if (ret == 0) {
-            offload_log(stderr, "[do_fork]\tWait for the child to initialize.\n");
+            fprintf(stderr, "[do_fork]\tWait for the child to initialize.\n");
             /* Wait for the child to initialize.  */
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
         } else {
-            offload_log(stderr, "[do_fork]\tErr! ret = %d\n", ret);
+            fprintf(stderr, "[do_fork]\tErr! ret = %d\n", ret);
             ret = -1;
         }
         pthread_mutex_unlock(&info.mutex);
@@ -7240,7 +7399,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
 		//pthread_mutex_lock(&clone_syscall_mutex);
         //extern int testint;
         //pthread_cond_wait()
-		offload_log(stderr, "[do_fork]\pthread_create finished\n");
+		fprintf(stderr, "[do_fork]\pthread_create finished\n");
     } else 
     {
         /* if no CLONE_VM, we consider it is a fork */
@@ -7282,7 +7441,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             fork_end(0);
         }
     }
-    offload_log(stderr, "[do_fork]\pthread_create finished, returning\n");
+    fprintf(stderr, "[do_fork]\pthread_create finished, returning\n");
     return ret;
 }
 
@@ -8905,20 +9064,29 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         //rcu_unregister_thread();
         //pthread_exit(NULL);
 
+    extern int cas_count;
+    fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
+    extern int ldex_count;
+    extern int stex_count;
+    fprintf(stderr, "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count / (double)ldex_count);
 
-        extern void cpu_exit_signal(void);
-        cpu_exit_signal();
-        //fprintf(stderr,"CAN U SEE ME?\n");
-        pthread_exit(0);
-        while (1)
-            ;
-        return NULL;
-        ret = 0; /* avoid warning */
-        break;
+    extern void
+    cpu_exit_signal(void);
+    cpu_exit_signal();
+    //fprintf(stderr,"CAN U SEE ME?\n");
+    pthread_exit(0);
+    while (1)
+        ;
+    return NULL;
+    ret = 0; /* avoid warning */
+    break;
     case TARGET_NR_read:
         if (arg3 == 0)
             ret = 0;
         else {
+
+            extern int offload_segfault_handler_positive(uint32_t page_addr, int perm);
+			offload_segfault_handler_positive(arg2, 2);
             if (!(p = lock_user(VERIFY_WRITE, arg2, arg3, 0)))
                 goto efault;
             ret = get_errno(safe_read(arg1, p, arg3));
@@ -11023,6 +11191,11 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         /* new thread calls */
     case TARGET_NR_exit_group:
         preexit_cleanup(cpu_env, arg1);
+    extern int cas_count;
+    fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
+    extern int ldex_count;
+    extern int stex_count;
+    fprintf(stderr, "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count/(double)ldex_count);
         ret = get_errno(exit_group(arg1));
         break;
 #endif
@@ -13018,6 +13191,9 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         extern int syscall_started_flag;
         extern __thread int offload_mode;
         extern int offload_server_idx;
+        //while (syscall_started_flag!=1) {
+        //    sched_yield();
+        //}
         if ((offload_mode == 3) && (offload_server_idx == 0) && (syscall_started_flag == 1))
         {
             //TODO
