@@ -1542,6 +1542,7 @@ static void futex_table_add(uint32_t futex_addr, int idx, int thread_id)
 	int i = 0;
 	//int j = 0;
 	fprintf(stderr, "[futex_table_add]\ttest point1\n");
+	//TODO: replace this with futex_table_find and create
 	/* Find a matching record. */
 	for (; i < FUTEX_RECORD_MAX; i++)
 	{
@@ -1630,13 +1631,36 @@ static struct futex_record * futex_table_find(uint32_t futex_addr)
 		pr = &futex_table[i];
 		if (i == FUTEX_RECORD_MAX)
 		{
-			fprintf(stderr, "[futex_table_find]\tfutex doesn't exist.\n");
+			fprintf(stderr, "[futex_table_find]\tfutex %p doesn't exist.\n", futex_addr);
 			return NULL;
 		}
 	}
 
 	fprintf(stderr, "[futex_table_find]\tfound futex record %d matched\n", i);
 	return pr;
+}
+
+static struct futex_record *futex_table_create_empty_record(uint32_t futex_addr)
+{
+	fprintf(stderr, "[futex_table_create_empty_record]\tAdding emty record %p!\n", futex_addr);
+	/* Make sure there is no same record. */
+	struct futex_record *pr = futex_table_find(futex_addr);
+	if (pr)
+		return pr;
+	/* Find a record not in use. */
+	int i = 0;
+	while (futex_table[i].isInUse) {
+		i++;
+		if (i == FUTEX_RECORD_MAX) {
+			fprintf(stderr, "[futex_table_create_empty_record]\tFATAL ERR: FUTEX TABLE FULL!\n");
+			exit(213);
+		}
+	}
+	/* Mark the record as in use. */
+	futex_table[i].isInUse = 1;
+	futex_table[i].head = NULL;
+	futex_table[i].futex_addr = futex_addr;
+	return &futex_table[i];
 }
 
 static void futex_table_wake(uint32_t futex_addr, int num, int idx, int thread_id)
@@ -1680,6 +1704,10 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx, int thread_i
 	offload_send_syscall_result(idx, count, thread_id);
 }
 
+/*  int futex(int *uaddr, int futex_op, int val,
+                 const struct timespec *timeout,    or: uint32_t val2 
+                 int *uaddr2, int val3);
+*/
 /*        FUTEX_CMP_REQUEUE (since Linux 2.6.7)
 		This operation first checks whether the location uaddr still
 		contains the value val3.  If not, the operation fails with the
@@ -1719,12 +1747,19 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 			uaddr, futex_op, val, val2, uaddr2, val3, idx, thread_id);
 	print_futex_table();
 	offload_segfault_handler_positive(uaddr, 1);
+	/*This operation first checks whether the location uaddr still
+		contains the value val3.  If not, the operation fails with the
+		error EAGAIN.
+	*/
 	if (*(int *)(g2h(uaddr)) != val3)
 	{
 		fprintf(stderr, "[futex_table_cmp_requeue]\t*(int*)(futex_addr) == %d != cmpval, returning with EAGAIN...%p\n", *(int *)(g2h(uaddr)), TARGET_EAGAIN);
 		offload_send_syscall_result(idx, TARGET_EAGAIN, thread_id);
 		return TARGET_EAGAIN;
 	}
+	/* Otherwise, the operation wakes up a maximum of
+		val waiters that are waiting on the futex at uaddr. 
+	*/
 	struct futex_record *pr = futex_table_find(uaddr);
 	/* If there is not a matching record, return 0. */
 	if (!pr) {
@@ -1752,45 +1787,61 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 			break;
 	}
 	// Clean up
-	if (pnode) /* If val is less than the number of waiters, then there is someone left, move it to new queue */
+	/*If there
+		are more than val waiters, then the remaining waiters are
+		removed from the wait queue of the source futex at uaddr and
+		added to the wait queue of the target futex at uaddr2.  The
+		val2 argument specifies an upper limit on the number of
+		waiters that are requeued to the futex at uaddr2.
+	*/
+
+	if (pnode) /* After waking up, there still are waiters left. */
 	{
 		pr->head = pnode;
 		struct futex_record *dup = futex_table_find(uaddr2);
+
 		if (!dup) {
-			fprintf(stderr, "[futex_table_cmp_requeue]\treplacing futex_record of %p\n", uaddr);
-			pr->futex_addr = uaddr2;
+			fprintf(stderr, "[futex_table_cmp_requeue]\tcreating futex_record of %p\n", uaddr2);
+			dup = futex_table_create_empty_record(uaddr2);
+			print_futex_table();
 		}
-		// add to addr2 queue
-		else {
+		// move to addr2 queue
+		{
 			fprintf(stderr, "[futex_table_cmp_requeue]\tadding to new queue at %p\n", uaddr2);
+			/* select up to val2 nodes to move (len(begin to end) == val2) */
 			struct Node *save, *begin, *end;
 			begin = pr->head;
 			pnode = begin;
 			while (pnode) {
+				end = pnode;
 				count_requeue++;
 				if (count_requeue == val2)
 					break;
 				pnode = pnode->next;
 			}
-			end = pnode;
-			// move `begin to end` to dup
+			fprintf(stderr, "[futex_table_cmp_requeue]\tmoving count_requeue to %p\n", uaddr2);
+			// If there is nothing left in uaddr, clean up, else delete the nodes.
 			if (end->next == NULL) {
-				// there is nothing left at uaddr, clean up
+				fprintf(stderr, "[futex_table_cmp_requeue]\tdeleting record uaddr1...\n", uaddr2);
 				pr->isInUse = 0;
 				pr->futex_addr = 0;
 				pr->head = NULL;
 			}
 			else {
-				/* Move the `begin to end` from uaddr1 to uaddr2 */
+				fprintf(stderr, "[futex_table_cmp_requeue]\tcleaning uaddr1..., I am not sure what to do..about val2\n", uaddr2);
+				exit(132);
 				pr->head = end->next;
-				end->next = dup->head;
-				dup->head = begin;
 			}
+
+			/* Move the `begin to end` from uaddr1 to uaddr2 */
+			end->next = dup->head;
+			dup->head = begin;
 
 		}
 	}
 	else // there is no one left, cleanup
 	{
+		fprintf(stderr, "[futex_table_cmp_requeue]\tNo one left. deleting record uaddr1...\n", uaddr2);
 		// cleanup
 		pr->isInUse = 0;
 		pr->futex_addr = 0;
