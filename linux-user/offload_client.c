@@ -456,11 +456,13 @@ void offload_connect_online_server(int idx)
 	fprintf(stderr,"[offload_connect_online_server]\tconnecting succeed, "
 					"client index# %d, skt: %d\n", idx, skt[idx]);
 
+//#define NONBLOCK_RECEIVE
 #ifdef NONBLOCK_RECEIVE
-	NONBLOCK receive
+	//NONBLOCK receive
 	fcntl(skt[idx], F_SETFL, fcntl(skt[idx], F_GETFL) | O_NONBLOCK);
 	struct timeval timeout={1, 0};
 	int ret = setsockopt(skt[idx], SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
+	//exit(1);
 #endif
 }
 static void offload_client_init(void)
@@ -1291,12 +1293,29 @@ static void offload_process_page_request(void)
 	p += sizeof(target_ulong);
 	int perm = *(uint32_t *) p;
 	p += sizeof(uint32_t);
+//#define MASTER_PAGE_OPTIMIZE
+#ifdef MASTER_PAGE_OPTIMIZE
+	
+	fprintf(stderr, "[offload_process_page_request client#%d]\tOPTIMIZED !!requested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
+	//mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ|PROT_WRITE);
+	offload_send_page_content(offload_client_idx, page_addr, perm, g2h(page_addr));
+	return;
+
+
+#endif
 
 	PageMapDesc *pmd = get_pmd(page_addr);
 	/*uint32_t got_flag = *(uint32_t *)p;
 	p += sizeof(uint32_t);*/
 	fprintf(stderr, "[offload_process_page_request client#%d]\trequested address: %x, perm: %d\n", offload_client_idx, page_addr, perm);
 	fprintf(log, "%d\t%p\t%d\n", offload_client_idx, page_addr, perm);
+	/* Cancle prefetch */
+	/* Cancle prefetch */
+	offload_client_fetch_page(offload_client_idx, page_addr, perm);
+	return;
+	/* Cancle prefetch */
+	/* Cancle prefetch */
+	
 	/* Check if already in prefetch list */
 	int isInPrefetch = prefetch_check(page_addr, offload_client_idx);
 	isInPrefetch = 0;
@@ -1366,6 +1385,7 @@ static int try_recv(int size)
 	int res;
 	int nleft = size;
 	char* ptr = net_buffer;
+		fprintf(stderr, "[try_recv]\ttry receiving %d bytes\n", nleft);
 	while (nleft > 0)
 	{
 		res = recv(skt[offload_client_idx], ptr, nleft, 0);
@@ -2401,6 +2421,9 @@ static void offload_process_page_ack(void)
 	p += sizeof(uint32_t);
 	uint32_t perm = *(uint32_t *) p;
 	p += sizeof(uint32_t);
+#ifdef MASTER_PAGE_OPTIMIZE
+	return;
+#endif
 
 	PageMapDesc *pmd = get_pmd(page_addr);
 

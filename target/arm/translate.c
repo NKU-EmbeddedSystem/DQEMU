@@ -50,7 +50,7 @@
 #define ENABLE_ARCH_8     arm_dc_feature(s, ARM_FEATURE_V8)
 
 #define ARCH(x) do { if (!ENABLE_ARCH_##x) goto illegal_op; } while(0)
-#define HASH_LLSC
+//#define HASH_LLSC
 
 #include "translate.h"
 
@@ -8451,7 +8451,7 @@ static void gen_store_exclusive(DisasContext *s, int rd, int rt, int rt2,
     TCGLabel *fail_label;
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
 
-    tcg_gen_stex_count(addr);
+    //tcg_gen_stex_count(addr);
     /* if (env->exclusive_addr == addr && env->exclusive_val == [addr]) {
          [addr] = {Rt};
          {Rd} = 0;

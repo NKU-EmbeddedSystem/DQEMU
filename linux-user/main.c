@@ -878,8 +878,11 @@ void offload_server_extra_init(void)
  * Short for guest thread place*/
 #define GUEST_THREAD_MAX 128
 int gst_thrd_plc[GUEST_THREAD_MAX] = //{0,0,1,1,2,2,3,3,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
-            {0};
             //{0,1,2,3,4,5,6,7,8,9,10,11};
+{
+	1,1,1
+
+};
 gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
 int max_server_in_use;
 
