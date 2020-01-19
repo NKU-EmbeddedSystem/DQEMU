@@ -1066,6 +1066,16 @@ static void offload_server_daemonize(void)
 	struct sockaddr_in client_addr;
 	socklen_t client_addr_size = sizeof(client_addr);
 	client_socket = accept(sktfd, (struct sockaddr*)&client_addr, &client_addr_size);
+	int flag = 1;
+	int result = setsockopt(client_socket,            /* socket affected */
+                        IPPROTO_TCP,     /* set option at TCP level */
+                        TCP_NODELAY,     /* name of option */
+                        (char *) &flag,  /* the cast is historical cruft */
+                        sizeof(int));    /* length of option value */
+	if (result<0) {
+		perror("setsockopt");
+		exit(3);
+	}
 	while (1)
 	{
 		

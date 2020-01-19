@@ -403,6 +403,16 @@ extern void offload_server_qemu_init(void);
 void offload_connect_online_server(int idx)
 {
 	skt[idx] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	int flag = 1;
+	int result = setsockopt(skt[idx],            /* socket affected */
+                        IPPROTO_TCP,     /* set option at TCP level */
+                        TCP_NODELAY,     /* name of option */
+                        (char *) &flag,  /* the cast is historical cruft */
+                        sizeof(int));    /* length of option value */
+	if (result<0) {
+		perror("setsockopt");
+		exit(3);
+	}
 	struct sockaddr_in server_addr, client_addr;
 	server_addr.sin_family = AF_INET;
 	server_addr.sin_port = htons(server_port_of(idx));

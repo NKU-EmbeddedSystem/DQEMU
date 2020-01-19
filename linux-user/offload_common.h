@@ -12,7 +12,7 @@
 #define MAX_OFFLOAD_NUM 100
 
 #define IDX_CLIENT 0
-#define DQEMU_DEBUG
+//#define DQEMU_DEBUG
 #ifdef DQEMU_DEBUG
 #define fprintf offload_log
 #else
