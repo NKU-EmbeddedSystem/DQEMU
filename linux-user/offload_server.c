@@ -30,6 +30,7 @@ static void* exec_segfault_addr[MAX_OFFLOAD_THREAD_IN_NODE]; static void* syscal
 static int pgfault_time_sum;
 static int syscall_time_sum;
 pthread_mutex_t page_process_mutex;
+pthread_mutex_t server_send_mutex;
 
 
 /* Init Page Info Table. */
@@ -124,6 +125,7 @@ static void offload_server_init(void)
 	pgfault_time_sum = 0;
 	offload_server_pmd_init();
 	pthread_mutex_init(&page_process_mutex, NULL);
+	pthread_mutex_init(&server_send_mutex, NULL);
 
 	uint32_t ret = target_mmap(0xa0000000, 
 						0x10000000, PROT_READ|PROT_WRITE,
@@ -1576,6 +1578,7 @@ static int autoSend(int Fd,char* buf, int length, int flag)
 {
 	char* ptr = buf;
 	int nleft = length, res;
+    pthread_mutex_lock(&server_send_mutex);
 	while (nleft > 0)
 	{
 		fprintf(stderr, "[autoSend]\tsendding left: %d\n", nleft);
@@ -1600,6 +1603,7 @@ static int autoSend(int Fd,char* buf, int length, int flag)
 		nleft -= res;
 		ptr += res;
 	}
+    pthread_mutex_unlock(&server_send_mutex);
 	return length;
 }
 
