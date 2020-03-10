@@ -60,7 +60,8 @@ int stex_count = 0;
 
 extern __thread int offload_mode; /* 1: server, 2: client  3: exec*/
 extern void exec_func(void);
-
+static void handler_arg_nodenumber(const char * arg);
+static void handler_arg_threadgroup(const char*);
 
 
 
@@ -411,6 +412,44 @@ static void handle_arg_offloadmode(const char *arg)
 	}
 	return;
 }
+int nodes = 1;
+static void handle_arg_nodenumber(const char *arg)
+{
+    nodes = atoi(arg);
+}
+#define GUEST_THREAD_MAX 128
+int gst_thrd_plc[GUEST_THREAD_MAX] = //{0,0,1,1,2,2,3,3,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+            //{0,1,2,3,4,5,6,7,8,9,10,11};
+{
+
+};
+gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
+int group = 1;
+static void handle_arg_threadgroup(const char *arg)
+{
+    fprintf(stderr, "nodes %d\n", nodes);
+    int group = atoi(arg);
+    if(nodes == 1)
+        return;
+    if(nodes <=0)
+    {
+        printf(stderr, "node must be greater than 0");
+    }
+for (int i = 0; i < GUEST_THREAD_MAX; i += group)
+        {
+            for (int j = i; j < i + group && j < GUEST_THREAD_MAX; j++)
+            {
+                gst_thrd_plc[j] = (i / group)  % (nodes-1) +1;
+            }
+        }
+        for (int i = 0; i < GUEST_THREAD_MAX; i++)
+        {
+            fprintf(stderr, "%d ", gst_thrd_plc[i]);
+        }
+        fprintf(stderr, "\n");
+
+    }
+
 extern int offload_server_idx;
 extern __thread int offload_client_idx;
 static void handle_arg_offloadidx(const char *arg)
@@ -476,6 +515,8 @@ static const struct qemu_argument arg_table[] = {
 	 "client",		"set offload mode, client/server"},
 	 {"offloadindex",	"OFFLOAD_IDX",		true, handle_arg_offloadidx,
 	 "1",		"set offload server index"},
+     {"n", "node number" , true , handle_arg_nodenumber, "1", "set node number"},
+     {"threadgroup", "thread number of a group", true, handle_arg_threadgroup, "1" , "set the thread number of a group"},
 	 
     {NULL, NULL, false, NULL, NULL, NULL}
 };
@@ -876,14 +917,6 @@ void offload_server_extra_init(void)
 }
 /* To manipulate guest thread's server. 
  * Short for guest thread place*/
-#define GUEST_THREAD_MAX 128
-int gst_thrd_plc[GUEST_THREAD_MAX] = //{0,0,1,1,2,2,3,3,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
-            //{0,1,2,3,4,5,6,7,8,9,10,11};
-{
-	0
-
-};
-gst_thrd_info_t gst_thrd_info[GUEST_THREAD_MAX];
 int max_server_in_use;
 
 pthread_t center_server_thread;
@@ -922,6 +955,7 @@ int main(int argc, char **argv, char **envp)
         /* Note that 0->0 is the main thread. */
         int server_thread_count[GUEST_THREAD_MAX] = {1, 0};
         int server_idx = 0;
+        
         for (int i = 0; i < GUEST_THREAD_MAX; i++) {
             server_idx = gst_thrd_plc[i];
             max_server_in_use = (server_idx > max_server_in_use) ? server_idx : max_server_in_use;
@@ -1238,3 +1272,4 @@ int main(int argc, char **argv, char **envp)
     /* never exits */
     return 0;
 }
+

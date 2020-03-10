@@ -92,7 +92,7 @@ static void offload_server_init(void)
 	sockaddr.sin_port = htons(server_port_of(offload_server_idx));
 	
 	//ip_addr
-	sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	sockaddr.sin_addr.s_addr = inet_addr("0.0.0.0");
 	pthread_mutex_init(&socket_mutex, NULL);
 	int tmp = 1;
 	setsockopt(sktfd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
@@ -923,7 +923,7 @@ void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 {
-#define PF_TIME
+//#define PF_TIME
 #ifdef PF_TIME
 	struct timeb t, tend;
     ftime(&t);

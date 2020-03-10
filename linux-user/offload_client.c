@@ -1,7 +1,3 @@
-
-
-
-
 #define MAP_PAGE_BITS 12
 // prefetch
 #define MAX_WORKER 16
@@ -423,12 +419,28 @@ void offload_connect_online_server(int idx)
 			ip_addr = "127.0.0.1";
 			break;
 		case 1:
+            ip_addr = "192.168.1.3";
+			//ip_addr = "127.0.0.1";
+			break;
 		case 2:
+            ip_addr = "192.168.1.4";
+			break;
+		case 3:
+            ip_addr = "192.168.1.5";
+			break;
+		case 4:
+            ip_addr = "192.168.1.6";
+			break;
+		case 5:
+            ip_addr = "192.168.1.7";
+			break;
+		case 6:
+            ip_addr = "192.168.1.1";
+			break;
 		default:
 			ip_addr = "10.134.101.9";
 			break;
 	}
-	ip_addr = "127.0.0.1";
 
 	//检索服务器的ip地址
 	unsigned long dst_ip;
@@ -1129,6 +1141,7 @@ static cas_record* cas_list_add_record(uint32_t cas_addr, uint32_t cas_val)
  * return 1 if it is a valid request and no one's using the cas -- it is good to go
  * else return 0
  */ 
+int good_to_go=0;
 static int cas_list_add_request(cas_record *record, int idx, uint32_t cmpv, uint32_t newv, uint32_t strv, int thread_idx)
 {
 	fprintf(stderr, "[cas_list_add_request]\tnew request cas_addr %p, idx %d->%d, cmpv %x, newv %x, strv %x\n"
@@ -1164,7 +1177,7 @@ static int cas_list_add_request(cas_record *record, int idx, uint32_t cmpv, uint
 		 * succeeds later.
 		 */
 	}
-	int good_to_go = 0;
+	good_to_go = 0;
 	/* Is it a valid request in proper time? */
 	if ((record->user == -1) && (cmpv == record->cas_value)) {
 		fprintf(stderr, "[cas_list_add_request]\tyou are good to go!\n");
@@ -1190,10 +1203,11 @@ static void offload_process_mutex_request(void)
 	p += sizeof(uint32_t);
 	int thread_idx = *(int *)p;
 	p += sizeof(int);
-	offload_segfault_handler_positive(cas_addr, 2);
+	offload_segfault_handler_positive(cas_addr, 1);
 	int strv = *(int*)g2h(cas_addr);
-	fprintf(stderr, "[offload_process_mutex_request client#%d]\trequested mutex address: %p from %d, cmpv %x, newv %x, strv %x from %d->%d\n", 
+	printf( "[offload_process_mutex_request client#%d]\trequested mutex address: %p from %d, cmpv %x, newv %x, strv %x from %d->%d\n", 
 					offload_client_idx, cas_addr, requestorId, cmpv, newv, strv, offload_client_idx, thread_idx);
+//#ifdef Jan22
 	pthread_mutex_lock(&g_cas_mutex);
 	show_cas_list();
 	cas_record *record = cas_list_lookup(cas_addr);
@@ -1205,7 +1219,8 @@ static void offload_process_mutex_request(void)
 	}
 	int good_to_go = cas_list_add_request(record, requestorId, cmpv, newv, strv, thread_idx);
 	show_cas_list();
-	if (good_to_go == 1) {
+//#endif
+	if (good_to_go == 1||1) {
 		record->user = requestorId;
 		record->user_thread_idx = thread_idx;
 		offload_send_mutex_verified(requestorId, thread_idx);
@@ -1701,7 +1716,8 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx, int thread_i
 	struct futex_record *pr = futex_table_find(futex_addr);
 	if (!pr) {
 		offload_send_syscall_result(idx, 0, thread_id);
-		return;
+		fprintf(stderr, "table element not found\n");
+        return;
 	}
 	// wake up all servers
 	struct Node *pnode = pr->head, *tmp;
@@ -1730,7 +1746,8 @@ static void futex_table_wake(uint32_t futex_addr, int num, int idx, int thread_i
 		pr->futex_addr = 0;
 		pr->head = NULL;
 	}
-	print_futex_table();
+    if(do_strace)
+	    print_futex_table();
 	offload_send_syscall_result(idx, count, thread_id);
 }
 
@@ -1948,6 +1965,7 @@ void syscall_daemonize(void)
 		extern void print_syscall(int num,
 				abi_long arg1, abi_long arg2, abi_long arg3,
 				abi_long arg4, abi_long arg5, abi_long arg6);
+        if(do_strace)
 		print_syscall(num,
 				arg1, arg2, arg3,
 				arg4, arg5, arg6);
@@ -1984,6 +2002,8 @@ void syscall_daemonize(void)
 
               The arguments uaddr2 and val3 are ignored.
 		*/
+        if(num == TARGET_NR_futex && arg2 == 64)
+            fprintf(stderr, "op == 64\n");
 		if ((num == TARGET_NR_futex)
 			&& ((arg2 == (FUTEX_PRIVATE_FLAG|FUTEX_WAIT)) || (arg2 == FUTEX_WAIT)))
 		{

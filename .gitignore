@@ -879,3 +879,11 @@ compile_commands.json
 *.txt
 core
 a.out
+__data
+__data.__owner
+best_group/
+best_group2/
+env.sh
+thread
+thread.c
+

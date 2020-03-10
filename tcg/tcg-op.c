@@ -2850,9 +2850,9 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
 
     memop = tcg_canonicalize_memop(memop, 0, 0);
     
+    //fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32] retv: %d, addr:%p, cmpv: %d, newv: %d, idx: %d, memop: %u\n", retv, (uint32_t)addr, cmpv, newv, idx, memop);
+    //gen_helper_offload_cmpxchg_prelude((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
     if (!(tcg_ctx->tb_cflags & CF_PARALLEL)) {
-    fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32] retv: %d, addr:%p, cmpv: %d, newv: %d, idx: %d, memop: %u\n", retv, (uint32_t)addr, cmpv, newv, idx, memop);
-    gen_helper_offload_cmpxchg_prelude((uint32_t) addr, (uint32_t) newv, (uint32_t) cmpv);
         fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32]\tDEBUG1\n");
         TCGv_i32 t1 = tcg_temp_new_i32();
         TCGv_i32 t2 = tcg_temp_new_i32();
@@ -2869,7 +2869,6 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
         if (memop & MO_SIGN) {
             tcg_gen_ext_i32(retv, t1, memop);
         } else {
-			fprintf(stderr, "b\n");
             tcg_gen_mov_i32(retv, t1);
         }
         tcg_temp_free_i32(t1);
@@ -2892,7 +2891,6 @@ void tcg_gen_atomic_cmpxchg_i32(TCGv_i32 retv, TCGv addr, TCGv_i32 cmpv,
 #endif
         /* this branch won't happen in DQEMU */
         if (memop & MO_SIGN) {
-            fprintf(stderr, "[tcg_gen_atomic_cmpxchg_i32]\tDEBUG3\n");
             tcg_gen_ext_i32(retv, retv, memop);
         }
     }

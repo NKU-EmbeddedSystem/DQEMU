@@ -1455,10 +1455,10 @@ void HELPER(offload_cmpxchg_prelude)(uint32_t addr, uint32_t newv, uint32_t cmpv
     //fprintf(stderr, "helper_offload_cmpxchg_prelude#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
     //if (offload_server_idx != 0)
         //offload_segfault_handler_positive(addr, 2);
-        extern int cas_count;
-        cas_count++;
-        
-        fprintf(stderr, "helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
+        //extern int cas_count;
+        //cas_count++;
+        //
+        //fprintf(stderr, "helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
     //if (offload_server_idx!=0)
         //offload_server_send_cmpxchg_start(addr, cmpv, newv);
 }
@@ -1467,7 +1467,7 @@ void HELPER(offload_cmpxchg_epilogue)(uint32_t addr, uint32_t newv, uint32_t cmp
 {
     //fprintf(stderr, "helper_offload_cmpxchg_epilogue#%d\taddr:%p, cmpv: %x, newv: %x, now val:%x\n", offload_server_idx, addr, cmpv, newv, *(uint32_t *)g2h(addr));
     //if (offload_server_idx != 0)
-        offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
+        //offload_server_send_cmpxchg_end((uint32_t)addr, *(uint32_t *)g2h(addr));
 }
 
 void HELPER(offload_load_exclusive)(uint32_t addr, uint32_t val)
