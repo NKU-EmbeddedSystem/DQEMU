@@ -886,4 +886,11 @@ best_group2/
 env.sh
 thread
 thread.c
+tp/
+arm-linux-user/config-target.mak
+config-host.mak
+config.log
+config.status
+arm-linux-user/
+
 

@@ -8352,7 +8352,7 @@ static void gen_load_exclusive(DisasContext *s, int rt, int rt2,
                                TCGv_i32 addr, int size)
 {
 
-    fprintf(stderr, "gen_load_exclusive pc=%p, size: %d, addr %p cpu_exclusive_val %p = %p\n", s->pc, size, addr, &cpu_exclusive_val, cpu_exclusive_val);
+    //fprintf(stderr, "gen_load_exclusive pc=%p, size: %d, addr %p cpu_exclusive_val %p = %p\n", s->pc, size, addr, &cpu_exclusive_val, cpu_exclusive_val);
     TCGv_i32 tmp = tcg_temp_new_i32();
     TCGMemOp opc = size | MO_ALIGN | s->be_data;
     // hash method

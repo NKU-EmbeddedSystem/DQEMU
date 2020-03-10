@@ -449,7 +449,7 @@ void offload_connect_online_server(int idx)
 		struct hostent *he;  //主机信息
 
 		if((he=gethostbyname(ip_addr))==NULL){
-		fprintf(stderr,"gethostbyname error\n");
+        perror("gethostbyname");
 		exit(-2);
 		}
 		fprintf(stderr, "[offload_connect_online_server]\tgot host name %s, h_addrtype %d, h_addr: %p\n", he->h_name, he->h_addrtype, he->h_addr);
@@ -467,8 +467,8 @@ void offload_connect_online_server(int idx)
 						, server_port_of(idx));
 		if (connect(skt[idx],(struct sockaddr*) &server_addr, struct_len) == -1)
 		{
-			fprintf(stderr, "[offload_connect_online_server]\tconnect port# %d failed, errno: %d\n"
-							, server_port_of(idx), errno);
+			printf("[offload_connect_online_server]\tconnect %s port# %d failed, errno: %d\n"
+							, ip_addr, server_port_of(idx), errno);
 			perror("connect");
 			exit(1);
 		}
@@ -677,7 +677,7 @@ static void dump_code(void)
 	int tmp[1];
 	cpu_memory_rw_debug(ENV_GET_CPU(client_env), 0x10324, tmp, 4, 1);
 	//fprintf(stderr, "[dump_code]\t0x10324 is at host %x. = %x = %x\n", g2h(0x10324), *((uint32_t *) g2h(0x10324)), tmp[0]);
-	target_disas(stderr, ENV_GET_CPU(client_env), client_env->regs[15], 10);
+	//target_disas(stderr, ENV_GET_CPU(client_env), client_env->regs[15], 10);
 	// why segmentation fault???????????????
 	//mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ);
 	memcpy((void *)p, (void *)(g2h(binary_start_address )), (unsigned int)binary_end_address - binary_start_address);
@@ -1481,7 +1481,7 @@ void* offload_client_daemonize(void)
 			struct tcp_msg_header *tcp_header = (struct tcp_msg_header *)net_buffer;
 			if (tcp_header->magic_nr!=COMM_MAGIC_NR)
 			{
-				fprintf(stderr, "[offload_client_daemonize]\ttcp_header->magic_nr == %p??\n", tcp_header->magic_nr);
+				printf( "[offload_client_daemonize]\ttcp_header->magic_nr == %p??\n", tcp_header->magic_nr);
 				exit(3);
 			}
 			switch (tcp_header->tag)
@@ -1531,7 +1531,7 @@ void* offload_client_daemonize(void)
 					break;
 
 				default:
-					fprintf(stderr, "[offload_client_daemonize]\tunknown tag:%d\n", tcp_header->tag);
+					printf( "[offload_client_daemonize]\tunknown tag:%d\n", tcp_header->tag);
 					exit(0);
 					break;
 
@@ -1603,7 +1603,7 @@ static void futex_table_add(uint32_t futex_addr, int idx, int thread_id)
 			i++;
 			if (i == FUTEX_RECORD_MAX)
 			{
-				fprintf(stderr, "[futex_table_add]\tFatal error: futex_table full! Please add more space.\n");
+				printf( "[futex_table_add]\tFatal error: futex_table full! Please add more space.\n");
 				exit(232);
 			}
 		}
@@ -1697,7 +1697,7 @@ static struct futex_record *futex_table_create_empty_record(uint32_t futex_addr)
 	while (futex_table[i].isInUse) {
 		i++;
 		if (i == FUTEX_RECORD_MAX) {
-			fprintf(stderr, "[futex_table_create_empty_record]\tFATAL ERR: FUTEX TABLE FULL!\n");
+			printf( "[futex_table_create_empty_record]\tFATAL ERR: FUTEX TABLE FULL!\n");
 			exit(213);
 		}
 	}
@@ -1875,7 +1875,7 @@ int futex_table_cmp_requeue(uint32_t uaddr, int futex_op, int val, uint32_t val2
 				pr->head = NULL;
 			}
 			else {
-				fprintf(stderr, "[futex_table_cmp_requeue]\tcleaning uaddr1..., I am not sure what to do..about val2\n", uaddr2);
+				printf( "[futex_table_cmp_requeue]\tcleaning uaddr1..., I am not sure what to do..about val2\n", uaddr2);
 				exit(132);
 				pr->head = end->next;
 			}
@@ -1965,10 +1965,11 @@ void syscall_daemonize(void)
 		extern void print_syscall(int num,
 				abi_long arg1, abi_long arg2, abi_long arg3,
 				abi_long arg4, abi_long arg5, abi_long arg6);
-        if(do_strace)
-		print_syscall(num,
-				arg1, arg2, arg3,
-				arg4, arg5, arg6);
+        if(do_strace) {
+		    print_syscall(num,
+		    		arg1, arg2, arg3,
+		    		arg4, arg5, arg6);
+        }
 		fprintf(stderr, "[syscall_daemonize]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
 		// futex wait
 		/*       int futex(int *uaddr, int futex_op, int val,
@@ -2021,7 +2022,7 @@ void syscall_daemonize(void)
 				// offload_send_syscall_result(idx, 0);
 				// TODO implement time wait
 				if (arg4 != NULL) {
-					fprintf(stderr, "[syscall_daemonize]\ttime FUTEX_WAIT not implemented!\n");
+					printf("[syscall_daemonize]\ttime FUTEX_WAIT not implemented!\n");
 					exit(122);
 				}
 			}
@@ -2100,7 +2101,7 @@ void syscall_daemonize(void)
 				*(int *)(g2h(futex_addr2)) ^= oparg;
 				break;
 			default:
-				fprintf(stderr, "futex_wake_op_op error! ");
+				printf( "futex_wake_op_op error! ");
 				exit(122);
 				break;
 			}
@@ -2135,7 +2136,7 @@ void syscall_daemonize(void)
 					futex_table_wake(futex_addr2, val2, idx, thread_id);
 				break;
 			default:
-				fprintf(stderr, "futex_wake_op_cmp error! ");
+				printf("futex_wake_op_cmp error! ");
 				exit(122);
 				break;
 			}
@@ -2292,12 +2293,12 @@ static void offload_send_page_request(int idx, target_ulong page_addr, uint32_t 
 	int res = autoSend(idx, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[offload_send_page_request]\tpage request %x sending to %d failed\n", g2h(page_addr), idx);
+		printf( "[offload_send_page_request]\tpage request %x sending to %d failed\n", g2h(page_addr), idx);
 		exit(0);
 	}
 	else if (res != p - net_buffer)
 	{
-		fprintf(stderr, "[offload_send_page_request]\tsent page %x request shorter than expected, %d of %d\n", page_addr, res, p - net_buffer);
+		printf( "[offload_send_page_request]\tsent page %x request shorter than expected, %d of %d\n", page_addr, res, p - net_buffer);
 		exit(0);
 	}
 	fprintf(stderr, "[offload_send_page_request]\tsent page %x request to node# %d, perm: %d, packet#%d\n", page_addr, idx, perm, get_number());
@@ -2498,7 +2499,7 @@ static void offload_send_page_perm(int idx, target_ulong page_addr, int perm)
 	int res = autoSend(idx, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[offload_send_page_perm]\tpage %x perm to %d sent failed res: %d errno: %d\n", page_addr, idx, res, errno);
+		printf( "[offload_send_page_perm]\tpage %x perm to %d sent failed res: %d errno: %d\n", page_addr, idx, res, errno);
 		exit(0);
 	}
 
@@ -2526,10 +2527,7 @@ static void offload_process_page_content(void)
 	int requestor_idx = pmd->requestor;
 
 	fprintf(stderr, "[offload_process_page_content]\tpage %x, perm %d, for #%d, actually forwho:%d\n", page_addr, perm, requestor_idx, forwho);
-	if (forwho != requestor_idx)
-	{
-		exit(0);
-	}
+	assert(forwho == requestor_idx);
 	if (perm == 2)
 	{
 		if (pmd->invalid_count - 1 <= 0)
@@ -2543,7 +2541,7 @@ static void offload_process_page_content(void)
 				pmd->invalid_count--;
 				if (pmd->invalid_count<0)
 				{
-					fprintf(stderr, "[offload_process_page_content]\tWTHE HELL IS happening??invalid_cound = %d\n", pmd->invalid_count);
+					printf( "[offload_process_page_content]\tWTHE HELL IS happening??invalid_cound = %d\n", pmd->invalid_count);
 					exit(-2);
 				}
 				offload_send_page_content(requestor_idx, page_addr, perm, p);
@@ -2552,7 +2550,7 @@ static void offload_process_page_content(void)
 
 			else if (requestor_idx == -1)
 			{
-				fprintf(stderr, "[offload_process_page_content]\tWTHE HELL IS happening??\n", page_addr, perm);
+				printf( "[offload_process_page_content]\tWTHE HELL IS happening??\n", page_addr, perm);
 				exit(123);
 			}
 		}
@@ -2880,7 +2878,7 @@ void offload_master_send_page(uint32_t page_addr, int perm, int idx)
 	int res = autoSend(idx, buf, p - buf, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[offload_master_send_page]\tsent page %x content failed\n", page_addr);
+		printf( "[offload_master_send_page]\tsent page %x content failed\n", page_addr);
 		exit(0);
 	}
 	fprintf(stderr, "[offload_master_send_page]\tsent page %x content, perm%d, packet#%d\n", page_addr, perm, get_number());

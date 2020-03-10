@@ -357,7 +357,7 @@ void cpu_loop(CPUARMState *env)
                             break;
                         }
                     } else {
-                        fprintf(stderr, "[arm-cpu]\tdoing syscall, current env: %p\n", env);
+                        qemu_log("[arm-cpu]\tdoing syscall, current env: %p\n", env);
                         extern int offload_server_idx;
                         if ((n == TARGET_NR_write
                             || n == TARGET_NR_read
@@ -387,13 +387,13 @@ void cpu_loop(CPUARMState *env)
                                 (env->regs[1]&FUTEX_WAIT == FUTEX_WAIT) && 
                                 (offload_server_idx > 0))// futex wait from server, ignore
                             {
-                                fprintf(stderr, "[arm-cpu]\tI am #%d ignoring..futex\n", offload_server_idx);
+                                qemu_log("[arm-cpu]\tI am #%d ignoring..futex\n", offload_server_idx);
                                 ret = 0;
                                 exit(-1);
                             }
                             else
                             {              
-                                fprintf(stderr, "[arm-cpu]\tI am #%d, passing syscall to center...\n", offload_server_idx);
+                                qemu_log("[arm-cpu]\tI am #%d, passing syscall to center...\n", offload_server_idx);
                                 extern abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
                                                             abi_long arg2, abi_long arg3, abi_long arg4,
                                                             abi_long arg5, abi_long arg6, abi_long arg7,
@@ -409,7 +409,7 @@ void cpu_loop(CPUARMState *env)
                                                               0, 0);
                                 //if (n==TARGET_NR_futex)
                                 //    ret = 0xfffff001u;
-                                fprintf(stderr, "[arm-cpu]\tpass_syscall got ret = %p\n", ret);
+                                qemu_log("[arm-cpu]\tpass_syscall got ret = %p\n", ret);
                                 //assert((unsigned int)ret >= 0xfffff001u);
                             }
                         }
@@ -427,7 +427,7 @@ void cpu_loop(CPUARMState *env)
                                             env->regs[4],
                                             env->regs[5],
                                             0, 0);
-                            fprintf(stderr, "[arm-cpu]\tdo_syscall got ret = %p\n", ret);
+                            qemu_log("[arm-cpu]\tdo_syscall got ret = %p\n", ret);
                             //assert((unsigned int)ret >= 0xfffff001u);
                         }
                         if (ret == -TARGET_ERESTARTSYS) {
@@ -490,7 +490,6 @@ void cpu_loop(CPUARMState *env)
             fprintf(stderr, "[cpu]\tqemu: unhandled CPU exception 0x%x - aborting\n", trapnr);
             abort();
         }
-        fprintf(stderr, "[cpu]\tProcessing pending signals\n");
         process_pending_signals(env);
     }
 }

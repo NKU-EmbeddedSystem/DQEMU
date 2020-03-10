@@ -442,11 +442,13 @@ for (int i = 0; i < GUEST_THREAD_MAX; i += group)
                 gst_thrd_plc[j] = (i / group)  % (nodes-1) +1;
             }
         }
+/*
         for (int i = 0; i < GUEST_THREAD_MAX; i++)
         {
-            fprintf(stderr, "%d ", gst_thrd_plc[i]);
+            printf("%d ", gst_thrd_plc[i]);
         }
         fprintf(stderr, "\n");
+        */
 
     }
 
@@ -773,7 +775,6 @@ void offload_server_qemu_init(void)
     env = cpu->env_ptr;
     cpu_reset(cpu);
 	
-	fprintf(stderr, "[server]\tenv set to addr %p\n", env);
     thread_cpu = cpu;
 	
     if (getenv("QEMU_STRACE")) {
@@ -910,7 +911,6 @@ void offload_server_extra_init(void)
     cpu = cpu_create(cpu_type);
     cpu_reset(cpu);
 
-    fprintf(stderr, "[server]\tenv set to addr %p\n", env);
     thread_cpu = cpu;
 
     return;
@@ -961,10 +961,12 @@ int main(int argc, char **argv, char **envp)
             max_server_in_use = (server_idx > max_server_in_use) ? server_idx : max_server_in_use;
             gst_thrd_info[i].server_idx = server_idx;
             gst_thrd_info[i].thread_idx = server_thread_count[server_idx]++;
-            fprintf(stderr, "Thread %d --> [%d->%d]\n", 
-                        i, gst_thrd_info[i].server_idx, 
-                        gst_thrd_info[i].thread_idx);
+            //fprintf(stderr, "Thread %d --> [%d->%d]\n", 
+            //            i, gst_thrd_info[i].server_idx, 
+            //            gst_thrd_info[i].thread_idx);
+            printf("%d,", gst_thrd_info[i].server_idx);
         }        
+        printf("\n");
 	}
 	else
 	{
@@ -972,7 +974,6 @@ int main(int argc, char **argv, char **envp)
 		exit(0);
 	}
 
-	fprintf(stderr, "[INIT DEBUG]\tPpoint1\n");
 	
     module_call_init(MODULE_INIT_TRACE);
     qemu_init_cpu_list();
@@ -1002,7 +1003,6 @@ int main(int argc, char **argv, char **envp)
 
     qemu_add_opts(&qemu_trace_opts);
 
-    fprintf(stderr, "[INIT DEBUG]\tPpoint2\n");
 	
 	
 
@@ -1032,7 +1032,6 @@ int main(int argc, char **argv, char **envp)
             _exit(EXIT_FAILURE);
         }
     }
-    fprintf(stderr, "[INIT DEBUG]\tPpoint3\n");
     if (cpu_model == NULL) {
         cpu_model = cpu_get_model(get_elf_eflags(execfd));
     }
@@ -1057,7 +1056,6 @@ int main(int argc, char **argv, char **envp)
     env = cpu->env_ptr;
     cpu_reset(cpu);
 	
-	fprintf(stderr, "[server]\tenv set to addr %p\n", env);
     thread_cpu = cpu;
 	
     if (getenv("QEMU_STRACE")) {
@@ -1094,7 +1092,6 @@ int main(int argc, char **argv, char **envp)
             mmap_next_start = reserved_va;
         }
     }
-    fprintf(stderr, "[INIT DEBUG]\tPpoint4\n");
     /*
      * Read in mmap_min_addr kernel parameter.  This value is used
      * When loading the ELF image to determine whether guest_base
@@ -1154,7 +1151,6 @@ int main(int argc, char **argv, char **envp)
     for (wrk = target_environ; *wrk; wrk++) {
         g_free(*wrk);
     }
-    fprintf(stderr, "[INIT DEBUG]\tPpoint1\n");
     g_free(target_environ);
 
     if (qemu_loglevel_mask(CPU_LOG_PAGE)) {
@@ -1205,7 +1201,7 @@ int main(int argc, char **argv, char **envp)
         }
         fprintf(stderr, "offload client mode\n");
         
-        fprintf(stderr, "size: %x, mask: %x\n", qemu_host_page_size, qemu_host_page_mask);
+        //fprintf(stderr, "size: %x, mask: %x\n", qemu_host_page_size, qemu_host_page_mask);
         offload_server_idx = 0;
         offload_client_idx = 0;
         offload_client_pmd_init();
@@ -1227,12 +1223,11 @@ int main(int argc, char **argv, char **envp)
         pthread_mutex_lock(&offload_center_init_mutex);
         pthread_cond_wait(&offload_center_init_cond, &offload_center_init_mutex);
         pthread_mutex_unlock(&offload_center_init_mutex);
-        fprintf(stderr, "Connecting online server from 1 to %d\n", max_server_in_use -1);
+        fprintf(stderr, "Connecting online server from 1 to %d\n", max_server_in_use);
         for (int i = 1; i <= max_server_in_use; i++) {
             extern void offload_connect_online_server(int idx);
             offload_connect_online_server(i);
         
-        fprintf(stderr, "Target long size = %d\n", sizeof(target_ulong));
         }
     }
     if (offload_mode == 1)

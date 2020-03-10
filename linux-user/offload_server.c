@@ -99,7 +99,8 @@ static void offload_server_init(void)
 	setsockopt(sktfd, SOL_SOCKET, SO_REUSEADDR, &tmp, sizeof(tmp));
 	if(bind(sktfd, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) == -1)
 	{
-		fprintf(stderr, "[offload_server_init]\tbind socket failed, at port# %d, errno:%d\n", server_port_of(offload_server_idx), errno);
+		printf("[offload_server_init]\tbind socket failed, at port# %d, errno:%d\n", server_port_of(offload_server_idx), errno);
+        perror("bind");
 		exit(0);
 	}
 	
@@ -279,7 +280,7 @@ static void load_brk(void)
 												PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 				mprotect(g2h(old_brk), (unsigned int)current_brk - old_brk, PROT_NONE);
 				if (target_mmap_return != old_brk) {
-					fprintf(stderr, "[load_brk]\ttarget_mmap  failed at start of ProcessOffloadStart, returns %x\n", target_mmap_return);
+					printf("[load_brk]\ttarget_mmap  failed at start of ProcessOffloadStart, returns %x\n", target_mmap_return);
 					exit(2);
 				}
 			}
@@ -288,7 +289,7 @@ static void load_brk(void)
 				int ret = target_munmap(current_brk, (unsigned int) old_brk - current_brk);
 				if (ret) 
 				{
-					fprintf(stderr, "[load_brk]\tThe munmap failed at the start of ProcessOffloadStart : %d \n", ret);
+					printf( "[load_brk]\tThe munmap failed at the start of ProcessOffloadStart : %d \n", ret);
 					exit(2);
 				}
 			}
@@ -314,7 +315,7 @@ static void load_binary(void)
 		memcpy(g2h(binary_start_address), p, (unsigned int)binary_end_address - binary_start_address);
 		
 		fprintf(stderr, "[load_binary]\there: %p\n", *(uint32_t *) g2h(thread_env->regs[15]));
-		disas(stderr, g2h(thread_env->regs[15]), 10);
+		//disas(stderr, g2h(thread_env->regs[15]), 10);
 
 		fprintf(stderr, "[load_binary]\tcode: %x", *((uint32_t *) g2h(0x102fa)));
 		mprotect(g2h(binary_start_address), (unsigned int)binary_end_address - binary_start_address, PROT_READ | PROT_WRITE | PROT_EXEC);
@@ -601,7 +602,7 @@ void offload_server_send_mutex_request(uint32_t mutex_addr, uint32_t cmpv, uint3
 	int res = autoSend(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[cmpxchg_request]\tsent mutex request %p failed\n", mutex_addr);
+		printf( "[cmpxchg_request]\tsent mutex request %p failed\n", mutex_addr);
 		exit(0);
 	}
 	fprintf(stderr, "[cmpxchg_request]\tsent mutex request, mutex addr: %p, packet %d, waiting...offload_server_idx=%d\n", mutex_addr, get_number(), offload_server_idx);
@@ -651,7 +652,7 @@ static void offload_server_send_page_request(target_ulong page_addr, uint32_t pe
 	int res = autoSend(client_socket, buf, pp - buf, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[offload_server_send_page_request]\tsent page %x request failed\n", page_addr);
+		printf( "[offload_server_send_page_request]\tsent page %x request failed\n", page_addr);
 		exit(0);
 	}
 	fprintf(stderr, "[offload_server_send_page_request]\tsent page %x request, perm: %s, packet#%d\n", page_addr, perm==1?"READ":"READ|WRITE", get_number());
@@ -819,7 +820,7 @@ static void offload_send_page_content(target_ulong page_addr, uint32_t perm, int
 	int res = autoSend(client_socket, buf, p - buf, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[offload_send_page_content]\tsent page %x content failed\n", page_addr);
+		printf( "[offload_send_page_content]\tsent page %x content failed\n", page_addr);
 		exit(0);
 	}
 	fprintf(stderr, "[offload_send_page_content]\tsent page %x content, perm%d, packet#%d\n", page_addr, perm, get_number());
@@ -843,7 +844,7 @@ static void offload_send_page_ack(target_ulong page_addr, uint32_t perm)
 	int res = autoSend(client_socket, net_buffer, p - net_buffer, 0);
 	if (res < 0)
 	{
-		fprintf(stderr, "[offload_send_page_ack]\tsent page %x ack failed\n", page_addr);
+		printf("[offload_send_page_ack]\tsent page %x ack failed\n", page_addr);
 		exit(0);
 	}
 	fprintf(stderr, "[offload_send_page_ack]\tsent page %x ack with perm: %s\n", page_addr, perm==1?"READ":"WRITE|READ");
@@ -1191,8 +1192,7 @@ static void offload_server_daemonize(void)
 				break;
 
 			default:
-				fprintf(stderr, "[offload_server_daemonize]\tunkown tag: %d\n", tag);
-				try_recv(size);
+				printf("[offload_server_daemonize]\tunkown tag: %d\n", tag);
 				exit(0);
 				break;
 				
@@ -1402,6 +1402,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	extern void print_syscall(int num,
               abi_long arg1, abi_long arg2, abi_long arg3,
               abi_long arg4, abi_long arg5, abi_long arg6);
+    if (do_strace)
 	print_syscall(num,
               arg1, arg2, arg3,
               arg4, arg5, arg6);
@@ -1549,14 +1550,14 @@ static void try_recv(int size)
 		fprintf(stderr, "[try_recv]\treceived %d\n", res);
 		if (res < 0)
 		{
-			fprintf(stderr, "[try_recv]\terrno: %d\n", res);
+			printf("[try_recv]\terrno: %d\n", res);
 			perror("try_recv");
 			exit(-1);
 		}
 		else if (res == 0)
 		{
-			fprintf(stderr, "[try_recv]\tconnection closed.\n");
-			fprintf(stderr, "[try_recv]\tnow pagefault total time = %d, syscall total time = %d\n", pgfault_time_sum, syscall_time_sum);
+			printf( "[try_recv]\tconnection closed.\n");
+			printf("[try_recv]\tnow pagefault total time = %d, syscall total time = %d\n", pgfault_time_sum, syscall_time_sum);
 			exit(0);
 		}
 		else

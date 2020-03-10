@@ -35,7 +35,6 @@
 #endif
 #include "sysemu/cpus.h"
 #include "sysemu/replay.h"
-#define DQEMU_DEBUG
 #ifdef DQEMU_DEBUG
 #define fprintf offload_log
 #else

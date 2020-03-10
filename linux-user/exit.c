@@ -25,6 +25,11 @@ extern void __gcov_dump(void);
 
 void preexit_cleanup(CPUArchState *env, int code)
 {
+    extern int cas_count;
+    qemu_log("end::CAS_COUNT: %d\n", cas_count);
+    extern int ldex_count;
+    extern int stex_count;
+    qemu_log( "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count / (double)ldex_count);
 #ifdef TARGET_GPROF
         _mcleanup();
 #endif

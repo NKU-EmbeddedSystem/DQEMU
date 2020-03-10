@@ -6384,7 +6384,7 @@ static void *clone_func_syscall(void *arg)
     CPUArchState *env;
     CPUState *cpu;
     TaskState *ts;
-	fprintf(stderr, "[clone_func_syscall]\tbegin\n");
+	qemu_log("[clone_func_syscall]\tbegin\n");
     rcu_register_thread();
     tcg_register_thread();
 	
@@ -6392,20 +6392,15 @@ static void *clone_func_syscall(void *arg)
     cpu = ENV_GET_CPU(env);
 	
     thread_cpu = cpu;
-	fprintf(stderr, "[clone_func_syscall]\tpoint1\n");
-	fprintf(stderr, "[clone_func_syscall]\tsyscall #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
+	qemu_log("[clone_func_syscall]\tsyscall #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
     TaskState* new_opaque = (TaskState*)malloc(sizeof(TaskState));
-    fprintf(stderr, "[clone_func_syscall]\tpoint1.1\n");
     *new_opaque = *((TaskState*)cpu->opaque);
-    fprintf(stderr, "[clone_func_syscall]\tpoint1.2\n");
     cpu->opaque = new_opaque;
-    fprintf(stderr, "[clone_func_syscall]\tpoint1.3\n");
     ts = (TaskState *)cpu->opaque;
-    fprintf(stderr, "[clone_func_syscall]\tpoint1.4\n");
     info->tid = gettid();
-    fprintf(stderr, "[clone_func_syscall]\t[task_settid]\n");
+    qemu_log("[clone_func_syscall]\t[task_settid]\n");
     task_settid(ts);
-    fprintf(stderr, "[clone_func_syscall]\ttid: %p\n", info->tid);
+    qemu_log("[clone_func_syscall]\ttid: %p\n", info->tid);
     
     if (info->child_tidptr)
         put_user_u32(info->tid, info->child_tidptr);
@@ -6413,9 +6408,8 @@ static void *clone_func_syscall(void *arg)
         put_user_u32(info->tid, info->parent_tidptr);
     /* Enable signals.  */
 
-	fprintf(stderr, "[clone_func_syscall]\t[sigprocmask]\n");
+	qemu_log("[clone_func_syscall]\t[sigprocmask]\n");
     sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
-	fprintf(stderr, "[clone_func_syscall]\tpoint2\n");
     
     /* Signal to the clone thread that we're ready.  */
     
@@ -6425,7 +6419,6 @@ static void *clone_func_syscall(void *arg)
     //pthread_cond_broadcast(&syscall_clone_cond);
     //pthread_mutex_unlock(&syscall_clone_mutex);
     
-    fprintf(stderr, "[clone_func_syscall]\tpoint2.5\n");
     /* Wait until the parent has finished initializing the tls state.  */
     // !! Try to delete this
     //pthread_mutex_lock(&clone_lock);
@@ -6438,7 +6431,6 @@ static void *clone_func_syscall(void *arg)
     /* Wait until the parent has finished initializing the tls state.  */
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
-    fprintf(stderr, "[clone_func_syscall]\tpoint3\n");
     offload_syscall_daemonize_start(info->env);
     /* never exits */
     return NULL;
@@ -6453,21 +6445,21 @@ static void *clone_func(void *arg)
     CPUState *cpu;
     TaskState *ts;
 	
-	fprintf(stderr, "[clone_func]\tBorn!\n");
+	qemu_log("[clone_func]\tBorn!\n");
 
     /* Since this is offloaded to remote, we don't need to register anymore.
      * But actually, this would cause an unknow segfault in race condition.
      * TODO: fix me. */
     //rcu_register_thread();
     //tcg_register_thread();
-	fprintf(stderr, "[clone_func]\tregisterd thread, starting...!\n");
+	qemu_log("[clone_func]\tregisterd thread, starting...!\n");
 	
     env = info->env;
     cpu = ENV_GET_CPU(env);
 	extern __thread CPUState *thread_cpu;
     thread_cpu = cpu;
 	
-	fprintf(stderr, "client #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
+	qemu_log(stderr, "[]client #%d, thread_cpu: %p\n", offload_client_idx, thread_cpu);
     ts = (TaskState *)cpu->opaque;
     info->tid = gettid();
     task_settid(ts);
@@ -6491,7 +6483,7 @@ static void *clone_func(void *arg)
     //    count_n++;
     //}
     int to_exit = offload_client_start(env);
-    fprintf(stderr, "[offload_client_start in syscall]\tWe're ready.\n");
+    qemu_log("[offload_client_start in syscall]\tWe're ready.\n");
     /* Signal to the parent that we're ready.  */
     pthread_mutex_lock(&info->mutex);
     pthread_cond_broadcast(&info->cond);
@@ -6508,7 +6500,7 @@ static void *clone_func(void *arg)
         pthread_exit(NULL);
     }
     offload_client_daemonize();
-	fprintf(stderr, "[offload_client_start in syscall]\tready to close network\n");
+	qemu_log("[offload_client_start in syscall]\tready to close network\n");
 	close_network();
 	printf("[offload_client_start in syscall]\toffloading finished\n");
     /* never exits */
@@ -6550,7 +6542,7 @@ static void *clone_func_local(void *arg)
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
 
-    fprintf(stderr, "[clone_func_local]\tguest base %p\n", guest_base);
+    qemu_log("[clone_func_local]\tguest base %p\n", guest_base);
 
     cpu_loop(env);
     /* never exits */
@@ -6560,11 +6552,11 @@ static void *clone_func_local(void *arg)
 void* test(void*arg)
 {
     while (1)
-    fprintf(stderr, "[test thread]\tI am alive!\n");
+    qemu_log("[test thread]\tI am alive!\n");
 }
 void *clone_func_server_local(void *arg)
 {
-    fprintf(stderr, "[clone_func_server_local]\tI am alive!\n");
+    qemu_log("[clone_func_server_local]\tI am alive!\n");
     new_thread_info *info = arg;
     CPUArchState *env;
     CPUState *cpu;
@@ -6572,7 +6564,7 @@ void *clone_func_server_local(void *arg)
     extern __thread int offload_mode;
     extern int offload_server_idx;
     offload_mode = 6;
-    fprintf(stderr, "[clone_func_server_local]\tI am alive!\n");
+    qemu_log("[clone_func_server_local]\tI am alive!\n");
     // !! I think we do it later.
     //rcu_register_thread();
     //tcg_register_thread();
@@ -6599,7 +6591,7 @@ void *clone_func_server_local(void *arg)
     pthread_mutex_lock(&clone_lock);
     pthread_mutex_unlock(&clone_lock);
     extern void exec_func_init(void);
-    fprintf(stderr, "[clone_func_server_local]\tEntering init...\n");
+    qemu_log("[clone_func_server_local]\tEntering init...\n");
 
     // /*
     //  * Now that page sizes are configured in tcg_exec_init() we can do
@@ -7057,8 +7049,8 @@ int do_fork_server_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr)
 {
-    fprintf(stderr, "[do_fork_server_local]\tStart doing fork..\n");
-    fprintf(stderr, "[do_fork_server_local]\tenv %p flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
+    qemu_log("[do_fork_server_local]\tStart doing fork..\n");
+    qemu_log("[do_fork_server_local]\tenv %p flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
                                                 env, flags, newsp, parent_tidptr, newtls, child_tidptr);
     CPUState *cpu = ENV_GET_CPU(env);
     int ret;
@@ -7134,10 +7126,10 @@ int do_fork_server_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             parallel_cpus = true;
             tb_flush(cpu);
         }
-        fprintf(stderr, "[do_fork_server_local]\tCreating child!\n");
+        qemu_log("[do_fork_server_local]\tCreating child!\n");
         ret = pthread_create(&info.thread, &attr, clone_func_server_local, &info);
         //ret = pthread_create(&info.thread, NULL, test, &info);
-        fprintf(stderr, "[do_fork_server_local]\tCreating child!%d\n", ret);
+        qemu_log("[do_fork_server_local]\tCreating child!%d\n", ret);
         //pthread_join(info.thread,NULL);
         /* TODO: Free new CPU state if thread creation failed.  */
 
@@ -7194,7 +7186,7 @@ int do_fork_server_local(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             fork_end(0);
         }
     }
-    fprintf(stderr, "[do_fork_server_local]\tReturning...\n");
+    qemu_log("[do_fork_server_local]\tReturning...\n");
     return ret;
 }
 
@@ -7250,7 +7242,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
                    abi_ulong parent_tidptr, target_ulong newtls,
                    abi_ulong child_tidptr)
 {
-    fprintf(stderr, "[do_fork]\tenv %p flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
+    qemu_log("[do_fork]\tenv %p flags %p, newsp %p, parent_tidptr %p, newtls %p, child_tidptr %p\n",
                                     env, flags, newsp, parent_tidptr, newtls, child_tidptr);
     CPUState *cpu = ENV_GET_CPU(env);
     int ret;
@@ -7273,22 +7265,22 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         thread_count++;
         int server_idx = gst_thrd_info[thread_count].server_idx,
             thread_idx = gst_thrd_info[thread_count].thread_idx;
-        fprintf(stderr, "[do_fork]\tguest thread %d : %d->%d\n",
+        qemu_log("[do_fork]\tguest thread %d : %d->%d\n",
                         thread_count, server_idx, thread_idx);
         /* Determine to create in local or offload to remote server. */
         if (is_first) {
-            fprintf(stderr, "[do_fork]\tCreating syscall thread...\n");
+            qemu_log("[do_fork]\tCreating syscall thread...\n");
             do_fork_syscall(env, flags, newsp, parent_tidptr, 
                                     newtls, child_tidptr);
             is_first = 0;
         }
         if (server_idx == 0) {
-            fprintf(stderr, "[do_fork]\tFork in local...\n");
+            qemu_log("[do_fork]\tFork in local...\n");
             return do_fork_local(env, flags, newsp, parent_tidptr, 
                                     newtls, child_tidptr);
         }
         else if (server_idx > 0) {
-            fprintf(stderr, "[do_fork]\tOffload to server #%d\n",
+            qemu_log("[do_fork]\tOffload to server #%d\n",
                             server_idx);
             offload_send_do_fork_info(server_idx, flags, newsp,
                     parent_tidptr, newtls, child_tidptr);
@@ -7359,17 +7351,17 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
         }
 
 
-        fprintf(stderr, "[do_fork]\tpthread_create\n");
+        qemu_log("[do_fork]\tpthread_create\n");
         ret = pthread_create(&info.thread, &attr, clone_func, &info);
         /* TODO: Free new CPU state if thread creation failed.  */
-        fprintf(stderr, "[do_fork]\tpthread_create res: %d\n", ret);
+        qemu_log("[do_fork]\tpthread_create res: %d\n", ret);
         if (is_first)
         {
             pthread_t syscall_init;
             ret = pthread_create(&syscall_init, &attr, clone_func_syscall, 
                                 &info);
             //pthread_join(syscall_init, NULL);
-            fprintf(stderr, "[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
+            qemu_log("[do_fork]\tpthread_create syscall_daemonize res: %d\n", ret);
             is_first = 0;
         }
         else {
@@ -7378,18 +7370,18 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             // pthread_cond_broadcast(&syscall_clone_cond);
             // pthread_mutex_unlock(&syscall_clone_mutex);
         }
-        fprintf(stderr, "[do_fork]\tSET mask NULL\n");
+        qemu_log("[do_fork]\tSET mask NULL\n");
         sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
-        fprintf(stderr, "[do_fork]\tDestroy attr\n");
+        qemu_log("[do_fork]\tDestroy attr\n");
         pthread_attr_destroy(&attr);
         
         if (ret == 0) {
-            fprintf(stderr, "[do_fork]\tWait for the child to initialize.\n");
+            qemu_log("[do_fork]\tWait for the child to initialize.\n");
             /* Wait for the child to initialize.  */
             pthread_cond_wait(&info.cond, &info.mutex);
             ret = info.tid;
         } else {
-            fprintf(stderr, "[do_fork]\tErr! ret = %d\n", ret);
+            qemu_log("[do_fork]\tErr! ret = %d\n", ret);
             ret = -1;
         }
         pthread_mutex_unlock(&info.mutex);
@@ -7399,7 +7391,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
 		//pthread_mutex_lock(&clone_syscall_mutex);
         //extern int testint;
         //pthread_cond_wait()
-		fprintf(stderr, "[do_fork]\pthread_create finished\n");
+		qemu_log("[do_fork]\pthread_create finished\n");
     } else 
     {
         /* if no CLONE_VM, we consider it is a fork */
@@ -7441,7 +7433,7 @@ static int do_fork(CPUArchState *env, unsigned int flags, abi_ulong newsp,
             fork_end(0);
         }
     }
-    fprintf(stderr, "[do_fork]\pthread_create finished, returning\n");
+    qemu_log("[do_fork]\pthread_create finished, returning\n");
     return ret;
 }
 
@@ -8192,12 +8184,12 @@ static inline abi_long host_to_target_stat64(void *cpu_env,
                                              struct stat *host_st)
 {
 #if defined(TARGET_ARM) && defined(TARGET_ABI32)
-    fprintf(stderr, "[DEBUG]\tpoint3-0\n");
-    fprintf(stderr, "[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+    qemu_log("[DEBUG]\tpoint3-0\n");
+    qemu_log("[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
 
     if (((CPUARMState *)cpu_env)->eabi) {
         struct target_eabi_stat64 *target_st;
-        fprintf(stderr, "[DEBUG]\tpoint3-a\n");
+        qemu_log("[DEBUG]\tpoint3-a\n");
         if (!lock_user_struct(VERIFY_WRITE, target_st, target_addr, 0))
             return -TARGET_EFAULT;
         memset(target_st, 0, sizeof(struct target_eabi_stat64));
@@ -8221,7 +8213,7 @@ static inline abi_long host_to_target_stat64(void *cpu_env,
     } else
 #endif
     {
-        fprintf(stderr, "[DEBUG]\tpoint3-b\n");
+        qemu_log("[DEBUG]\tpoint3-b\n");
 #if defined(TARGET_HAS_STRUCT_STAT64)
         struct target_stat64 *target_st;
 #else
@@ -8277,7 +8269,6 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
 {
 	
 	
-	fprintf(stderr, "FUTEXFUTEXFUTEXFUTEXFUTEXFUTEX\n");
     struct timespec ts, *pts;
     int base_op;
 
@@ -8294,14 +8285,14 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
     case FUTEX_WAIT_BITSET:
 		
 		
-		fprintf(stderr, "ffffffffffffffffutex wait uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
+		qemu_log("[futex]futex wait uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
 		//TODO uint32_t should be int
         if (*(uint32_t*)g2h(uaddr) != val)
         {
-            fprintf(stderr, "[offload_server_futex]\t[*(uint32_t*)g2h(uaddr) %d == val %d, returning...]\n", *(uint32_t*)g2h(uaddr), val);
+            qemu_log("[offload_server_futex]\t[*(uint32_t*)g2h(uaddr) %d == val %d, returning...]\n", *(uint32_t*)g2h(uaddr), val);
             return 0;
         }
-        fprintf(stderr, "[DEBUG]\tpoint1\n");
+        qemu_log("[DEBUG]\tpoint1\n");
         extern __thread int offload_mode;
         extern int offload_server_idx;
         if ((offload_mode == 3) && (offload_server_idx == 0))//exec on center
@@ -8312,7 +8303,7 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
         // {
         //     timeout = 3;
         // }
-        fprintf(stderr, "[DEBUG]\tpoint2\n");
+        qemu_log("[DEBUG]\tpoint2\n");
         if (timeout) {
             pts = &ts;
             target_to_host_timespec(pts, timeout);
@@ -8320,8 +8311,8 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
             
             pts = NULL;
         }
-        fprintf(stderr, "[DEBUG]\tpoint3\n");
-        fprintf(stderr, "[futex_wait]\t[timeout:]%d,%d\n", pts->tv_sec, pts->tv_nsec);
+        qemu_log("[DEBUG]\tpoint3\n");
+        qemu_log("[futex_wait]\t[timeout:]%d,%d\n", pts->tv_sec, pts->tv_nsec);
         return get_errno(safe_futex(g2h(uaddr), op, tswap32(val),
                          pts, NULL, val3));
 						 
@@ -8331,13 +8322,13 @@ static int do_futex(target_ulong uaddr, int op, int val, target_ulong timeout,
     case FUTEX_WAKE:
 		
 		
-		fprintf(stderr, "ffffffffffffffffutex wake uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
+		qemu_log( "[futex]ffffffffffffffffutex wake uaddr: %x, haddr: %x, val: %p, tswap32val: %p, now g2g val: %p\n", uaddr, g2h(uaddr), val, tswap32(val), *(uint32_t*)g2h(uaddr));
 		
 		//return 0;
 
         if (val3 == 1) // pthread_join, put childptr to 0.
         {
-            fprintf(stderr, "[futex_wait]\t[detected pthread_join]\n");
+            qemu_log("[futex_wait]\t[detected pthread_join]\n");
             put_user_u32(0, uaddr);
             *(uint32_t*)g2h(uaddr) = 0;
         }
@@ -8958,13 +8949,13 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                     abi_long arg5, abi_long arg6, abi_long arg7,
                     abi_long arg8)
 {
-    //fprintf(stderr, "[DEBUGsyscall]\tpoint0\n");
+    //qemu_log("[DEBUGsyscall]\tpoint0\n");
     CPUState *cpu = ENV_GET_CPU(cpu_env);
     abi_long ret;
     struct stat st;
     struct statfs stfs;
     void *p;
-    //fprintf(stderr, "[DEBUGsyscall]\tpoint1\n");
+    //qemu_log("[DEBUGsyscall]\tpoint1\n");
 #if defined(DEBUG_ERESTARTSYS)
     /* Debug-only code for exercising the syscall-restart code paths
      * in the per-architecture cpu main loops: restart every syscall
@@ -8979,15 +8970,12 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         }
     }
 #endif
-#define DEBUG
-#ifdef DEBUG
-    gemu_log("DEBUGGING syscall %d\n\n", num);
-#endif
     trace_guest_user_syscall(cpu, num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
-    //fprintf(stderr, "[DEBUGsyscall]\tpoint1.5\n");
-    if(do_strace)
+    //qemu_log("[DEBUGsyscall]\tpoint1.5\n");
+    if(do_strace) {
         print_syscall(num, arg1, arg2, arg3, arg4, arg5, arg6);
-	//fprintf(stderr, "[DEBUGsyscall]\tpoint2\n");
+    }
+	//qemu_log("[DEBUGsyscall]\tpoint2\n");
 	
 	
     switch(num) {
@@ -9030,7 +9018,6 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         cpu_list_unlock();
         preexit_cleanup(cpu_env, arg1);
         // thread ends, avoid terminating 
-        //fprintf(stderr,"DDDDDDDDDDDDDDDDDOOOOOOOOOOOOOOOONNNNNNNNNNNNNNNNTTTTTTTTTTTTT\n");
         //will result in process termination, never do that
         //_exit(arg1);
 
@@ -9040,8 +9027,8 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 
         cpu_list_unlock();
         ts = cpu->opaque;
-        //fprintf(stderr,"[exit]\tNOW child_tidptr: %p\n", ts->child_tidptr);
-        fprintf(stderr,"[exit]\tNOW child_tidptr value: %p\n", *(uint32_t*)g2h(ts->child_tidptr));
+        //qemu_log("[exit]\tNOW child_tidptr: %p\n", ts->child_tidptr);
+        qemu_log("[exit]\tNOW child_tidptr value: %p\n", *(uint32_t*)g2h(ts->child_tidptr));
         if (ts->child_tidptr) {
             
             //*(uint32_t*)(g2h(ts->child_tidptr)) = 0;
@@ -9054,26 +9041,19 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
                         1, 1, 1, 0, 1);
         }
         thread_cpu = NULL;
-        fprintf(stderr,"[exit]\tcpu_list_unlocking\n");
+        qemu_log("[exit]\tcpu_list_unlocking\n");
         cpu_list_unlock();
-        fprintf(stderr,"[exit]\tobject_unref\n");
+        qemu_log("[exit]\tobject_unref\n");
         object_unref(OBJECT(cpu));
-        fprintf(stderr,"[exit]\tg_free\n");
+        qemu_log("[exit]\tg_free\n");
         g_free(ts);
-        //fprintf(stderr,"NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO\n");
         //rcu_unregister_thread();
         //pthread_exit(NULL);
 
-    extern int cas_count;
-    fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
-    extern int ldex_count;
-    extern int stex_count;
-    fprintf(stderr, "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count / (double)ldex_count);
 
     extern void
     cpu_exit_signal(void);
     cpu_exit_signal();
-    //fprintf(stderr,"CAN U SEE ME?\n");
     pthread_exit(0);
     while (1)
         ;
@@ -9098,7 +9078,6 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         }
         break;
     case TARGET_NR_write:
-        //fprintf(stderr,"I am fvking writing!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
         if (!(p = lock_user(VERIFY_READ, arg2, arg3, 1)))
             goto efault;
         if (fd_trans_target_to_host_data(arg1)) {
@@ -9116,16 +9095,16 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         break;
 #ifdef TARGET_NR_open
     case TARGET_NR_open:
-        //fprintf(stderr, "[DEBUG]\tpoint0\n");
+        //qemu_log("[DEBUG]\tpoint0\n");
         if (!(p = lock_user_string(arg1)))
             goto efault;
-        //fprintf(stderr, "[DEBUG]\tpoint1\n");
+        //qemu_log("[DEBUG]\tpoint1\n");
         ret = get_errno(do_openat(cpu_env, AT_FDCWD, p,
                                   target_to_host_bitmask(arg2, fcntl_flags_tbl),
                                   arg3));
-        //fprintf(stderr, "[DEBUG]\tpoint2\n");
+        //qemu_log("[DEBUG]\tpoint2\n");
         fd_trans_unregister(ret);
-        //fprintf(stderr, "[DEBUG]\tpoint3\n");
+        //qemu_log("[DEBUG]\tpoint3\n");
         unlock_user(p, arg1, 0);
         break;
 #endif
@@ -11192,10 +11171,8 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_NR_exit_group:
         preexit_cleanup(cpu_env, arg1);
     extern int cas_count;
-    fprintf(stderr, "end::helper_offload_cmpxchg_prelude\tCAS_COUNT: %d\n", cas_count);
     extern int ldex_count;
     extern int stex_count;
-    fprintf(stderr, "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count/(double)ldex_count);
         ret = get_errno(exit_group(arg1));
         break;
 #endif
@@ -12146,14 +12123,14 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
 #endif
 #ifdef TARGET_NR_fstat64
     case TARGET_NR_fstat64:
-        //fprintf(stderr, "[DEBUG]\tpoint0\n");
+        //qemu_log("[DEBUG]\tpoint0\n");
         ret = get_errno(fstat(arg1, &st));
-        //fprintf(stderr, "[DEBUG]\tpoint1\n");
+        //qemu_log("[DEBUG]\tpoint1\n");
         if (!is_error(ret))
         {
 
-            //fprintf(stderr, "[DEBUG]\tpoint2\n");
-            //fprintf(stderr, "[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
+            //qemu_log("[DEBUG]\tpoint2\n");
+            //qemu_log("[DEBUG]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
             ret = host_to_target_stat64(cpu_env, arg2, &st);
         }
         break;

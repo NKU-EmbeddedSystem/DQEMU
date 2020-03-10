@@ -32,11 +32,13 @@ __thread int offload_thread_idx;
 #define PRTCTRL_CYN "\e[0;36m"
 #define PRTCTRL_PURPLE "\e[0;35m"
 #define DEBUG 0
+extern FILE* qemu_logfile;
 void offload_log(FILE *f, const char *c, ...)
 {
-	if (0)
-		return;
 
+    if (!qemu_logfile) {
+        return;
+    }
 	struct timeb t;
     ftime(&t);
 	char tmp[1000] = "";
@@ -73,5 +75,4 @@ void offload_log(FILE *f, const char *c, ...)
     va_start(args, tmp);
     vfprintf(f, tmp, args);
     va_end(args);
-
 }
