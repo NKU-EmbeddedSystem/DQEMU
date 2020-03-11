@@ -441,7 +441,7 @@ void offload_connect_online_server(int idx)
 			ip_addr = "10.134.101.9";
 			break;
 	}
-
+	ip_addr = "127.0.0.1";
 	//检索服务器的ip地址
 	unsigned long dst_ip;
 	fprintf(stderr,"ip_addr: %s\n", ip_addr);

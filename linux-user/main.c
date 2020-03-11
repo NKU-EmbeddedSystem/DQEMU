@@ -964,7 +964,7 @@ int main(int argc, char **argv, char **envp)
             //fprintf(stderr, "Thread %d --> [%d->%d]\n", 
             //            i, gst_thrd_info[i].server_idx, 
             //            gst_thrd_info[i].thread_idx);
-            printf("%d,", gst_thrd_info[i].server_idx);
+            fprintf(stderr, "%d,", gst_thrd_info[i].server_idx);
         }        
         printf("\n");
 	}

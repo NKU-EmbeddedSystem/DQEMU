@@ -15,6 +15,7 @@ accel/tcg/trace.c-timestamp
 accel/tcg/trace.d
 accel/tcg/trace.h
 accel/tcg/trace.h-timestamp
+aarch64-linux-user/
 arm-linux-user-config-devices.mak.d
 arm-linux-user/accel/
 arm-linux-user/config-devices.mak
