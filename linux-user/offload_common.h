@@ -11,7 +11,7 @@
 #define NET_BUFFER_SIZE 3000000
 #define MAX_OFFLOAD_NUM 100
 
-// #define DQEMU_DEBUG
+#define DQEMU_DEBUG
 #define IDX_CLIENT 0
 #ifdef DQEMU_DEBUG
 #define fprintf offload_log
