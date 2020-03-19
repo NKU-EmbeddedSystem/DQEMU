@@ -517,8 +517,8 @@ static const struct qemu_argument arg_table[] = {
 	 "client",		"set offload mode, client/server"},
 	 {"offloadindex",	"OFFLOAD_IDX",		true, handle_arg_offloadidx,
 	 "1",		"set offload server index"},
-     {"n", "node number" , true , handle_arg_nodenumber, "1", "set node number"},
-     {"threadgroup", "thread number of a group", true, handle_arg_threadgroup, "1" , "set the thread number of a group"},
+     {"node", "node number" , true , handle_arg_nodenumber, "1", "set node number"},
+     {"group", "thread number of a group", true, handle_arg_threadgroup, "1" , "set the thread number of a group"},
 	 
     {NULL, NULL, false, NULL, NULL, NULL}
 };
