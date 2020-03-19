@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 #include "offload_common.h"
 #include <sys/timeb.h>
+#include <stdatomic.h>
 #define MAP_PAGE_BITS 12
 void offload_send_page_request_and_wait(uint32_t page_addr, int perm);
 void* offload_server_start_thread(void* arg);

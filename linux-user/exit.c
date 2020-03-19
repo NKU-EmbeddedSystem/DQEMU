@@ -29,6 +29,9 @@ void preexit_cleanup(CPUArchState *env, int code)
     qemu_log("end::CAS_COUNT: %d\n", cas_count);
     extern int ldex_count;
     extern int stex_count;
+    extern int pgfault_count;
+    extern int pf_count;
+    qemu_log(" pgfault counter %d %d\n", pgfault_count,pf_count);
     qemu_log( "ldex_count %d, stex_count %d, ratio %f\n", ldex_count, stex_count, (double)stex_count / (double)ldex_count);
 #ifdef TARGET_GPROF
         _mcleanup();

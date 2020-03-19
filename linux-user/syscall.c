@@ -9051,8 +9051,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
         //pthread_exit(NULL);
 
 
-    extern void
-    cpu_exit_signal(void);
+    extern void cpu_exit_signal(void);
     cpu_exit_signal();
     pthread_exit(0);
     while (1)

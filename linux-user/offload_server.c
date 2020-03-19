@@ -28,6 +28,8 @@ static int futex_uaddr_changed_flag; static pthread_mutex_t futex_mutex; static 
 static int exec_ready_to_init; static pthread_mutex_t exec_func_init_mutex; static pthread_cond_t exec_func_init_cond;
 static void* exec_segfault_addr[MAX_OFFLOAD_THREAD_IN_NODE]; static void* syscall_segfault_addr;
 static int pgfault_time_sum;
+int pgfault_count;
+int pf_count;
 static int syscall_time_sum;
 pthread_mutex_t page_process_mutex;
 pthread_mutex_t server_send_mutex;
@@ -683,18 +685,6 @@ static void offload_process_page_request(void)
 		pthread_mutex_lock(&master_mprotect_mutex);
 	}
 	mprotect(g2h(page_addr), TARGET_PAGE_SIZE, PROT_READ);//prevent writing at this time!!
-
-	//if (page_addr == 0x78000)
-	//{
-	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t0x78f4c = %d", *(int *)(g2h(0x78f4c)));
-	//}
-	///* debug pthread_mutex_struct */
-	//if (page_addr == 0x78000)
-	//{
-	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t__lock0x77f34 = %d", *(int *)(g2h(0x78f34)));
-	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t__count0x77f38 = %d", *(int *)(g2h(0x78f38)));
-	//	fprintf(stderr, "[offload_process_page_request]\tdebug\t__owner0x77f40 = %d", *(int *)(g2h(0x78f3C)));
-	//}
 	offload_send_page_content(page_addr, perm, forwho);
 	fprintf(stderr, "[offload_process_page_request]\tsent content\n", page_addr, perm);
 	/*	if required permission is WRITE|READ,
@@ -926,8 +916,10 @@ void offload_send_page_request_and_wait(uint32_t page_addr, int perm)
 /* send page request; sleep until page is sent back */
 int offload_segfault_handler(int host_signum, siginfo_t *pinfo, void *puc)
 {
-//#define PF_TIME
+#define PF_TIME
 #ifdef PF_TIME
+	atomic_inc(&pgfault_count);
+	pf_count++;
 	struct timeb t, tend;
     ftime(&t);
 #endif
@@ -1407,7 +1399,7 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
               arg1, arg2, arg3,
               arg4, arg5, arg6);
 	
-	char buf[TARGET_PAGE_SIZE*2];
+	char buf[TARGET_PAGE_SIZE*4];
 	char *pp = buf + sizeof(struct tcp_msg_header);
 	CPUARMState env = *((CPUARMState*)cpu_env);
 	*((CPUARMState*)pp) = (CPUARMState)env;
@@ -1415,12 +1407,12 @@ abi_long pass_syscall(void *cpu_env, int num, abi_long arg1,
 	fprintf(stderr, "[pass_syscall]\teabi:%p\n",((CPUARMState *)cpu_env)->eabi);
 	*((int *)pp) = (int) num;
 	pp += sizeof(int);
-	*((uint32_t*)pp) = (uint32_t)(arg1);
-	pp += sizeof(uint32_t);
-	*((uint32_t*)pp) = (uint32_t)(arg2);
-	pp += sizeof(uint32_t);
-	*((uint32_t*)pp) = (uint32_t)(arg3);
-	pp += sizeof(uint32_t);
+	*((abi_long*)pp) = (abi_long)(arg1);
+	pp += sizeof(abi_long);
+	*((abi_long*)pp) = (abi_long)(arg2);
+	pp += sizeof(abi_long);
+	*((abi_long*)pp) = (abi_long)(arg3);
+	pp += sizeof(abi_long);
 	*((abi_long*)pp) = (abi_long)arg4;
 	pp += sizeof(abi_long);
 	*((abi_long*)pp) = (abi_long)arg5;
