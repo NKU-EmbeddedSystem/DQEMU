@@ -5,6 +5,9 @@
 *.d
 *.o
 
+
+64-elf
+aarch_server.sh
 accel/kvm/trace.c
 accel/kvm/trace.c-timestamp
 accel/kvm/trace.d
