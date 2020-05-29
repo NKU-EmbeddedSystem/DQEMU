@@ -4,10 +4,6 @@
 *.swp
 *.d
 *.o
-
-
-64-elf
-aarch_server.sh
 accel/kvm/trace.c
 accel/kvm/trace.c-timestamp
 accel/kvm/trace.d
@@ -895,6 +891,5 @@ arm-linux-user/config-target.mak
 config-host.mak
 config.log
 config.status
-arm-linux-user/
-
+.*-linux-user/
 
