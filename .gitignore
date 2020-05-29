@@ -892,4 +892,5 @@ config-host.mak
 config.log
 config.status
 .*-linux-user/
+build/
 
