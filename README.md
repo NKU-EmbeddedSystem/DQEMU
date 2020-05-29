@@ -46,5 +46,5 @@ cd build
 ./arm-linux-user/qemu-arm --offloadmode client --node 2 --group 2 path_to_elf
 ```
 
-The result will shown in Client's terminal
+The result will be shown in Client's terminal
 
