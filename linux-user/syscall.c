@@ -34,6 +34,7 @@
 #include <sys/resource.h>
 #include <sys/swap.h>
 #include <linux/capability.h>
+#include <linux/sockios.h>
 #include <sched.h>
 #include <sys/timex.h>
 #include <sys/socket.h>
@@ -252,7 +253,13 @@ static type name (type1 arg1,type2 arg2,type3 arg3,type4 arg4,type5 arg5,	\
 #endif
 
 #ifdef __NR_gettid
-_syscall0(int, gettid)
+#if !defined(_GNU_SOURCE) || !defined(__GLIBC__) || __GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ < 30)
+static
+pid_t gettid ( void )
+{
+    return syscall (SYS_gettid);
+}
+#endif
 #else
 /* This is a replacement for the host gettid() and must return a host
    errno. */
@@ -9453,7 +9460,7 @@ abi_long do_syscall(void *cpu_env, int num, abi_long arg1,
             time_t host_time;
             if (get_user_sal(host_time, arg1))
                 goto efault;
-            ret = get_errno(stime(&host_time));
+            return get_errno(clock_settime(CLOCK_REALTIME, &ts));
         }
         break;
 #endif
